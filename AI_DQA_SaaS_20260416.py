@@ -18,17 +18,15 @@ from docx.oxml.ns import qn
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# ================== 自定义 CSS（保持美观） ==================
+# ================== 自定义 CSS ==================
 st.markdown("""
 <style>
-    /* 全局容器宽度 */
     .block-container {
         max-width: 100% !important;
         width: 100% !important;
         padding-left: 1rem !important;
         padding-right: 1rem !important;
     }
-    /* 主分析按钮样式 */
     .main-analyze button {
         background-color: #ff4b4b !important;
         font-size: 36px !important;
@@ -36,7 +34,6 @@ st.markdown("""
         border-radius: 60px !important;
         box-shadow: 0 8px 16px rgba(0,0,0,0.2) !important;
     }
-    /* 报告卡片样式 */
     .report-card {
         width: 100% !important;
         background-color: #f8f9fa;
@@ -111,7 +108,7 @@ class RiskDatabase:
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         raise NotImplementedError
 
-# ================== SQLite 实现（完整） ==================
+# ================== SQLite 实现 ==================
 class SQLiteDatabase(RiskDatabase):
     def __init__(self):
         self.conn = sqlite3.connect('app_data.db', check_same_thread=False)
@@ -293,7 +290,7 @@ class SQLiteDatabase(RiskDatabase):
         self.conn.commit()
         self.load_caches()
 
-# ================== Neo4j 实现（完整） ==================
+# ================== Neo4j 实现 ==================
 class Neo4jDatabase(RiskDatabase):
     def __init__(self):
         self.driver = None
@@ -720,7 +717,6 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
     doc_bytes.seek(0)
     return doc_bytes
 
-# ================== AI 分析 ==================
 def generate_ai_analysis_content(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase, lang: str = "zh") -> str:
     search_keywords = f"{product_name} {product_desc}"
     kb_items = db.search_knowledge(search_keywords, limit=10)
@@ -786,7 +782,7 @@ Note: Do not bold module names in the table, and avoid using ** symbols.
     raw = call_deepseek(prompt, max_tokens=4000)
     return clean_ai_response(raw, lang)
 
-# ================== 管理员设置弹窗（无授权码生成器） ==================
+# ================== 管理员设置弹窗 ==================
 @st.dialog("管理员设置", width="large")
 def admin_settings_dialog():
     st.subheader("🔐 管理员验证")
@@ -925,6 +921,7 @@ TEXTS = {
         "footer": "© 2026 Laurence Ku | AI+DQA 风险分析",
         "db_status": "数据库状态",
         "db_connected": "✅ 混合模式 (SQLite + Neo4j)",
+        "download_btn": "📥 下载 Word 报告",
     },
     "en": {
         "title": "🔍 AI+DQA Product Design Risk Analysis",
@@ -949,6 +946,7 @@ TEXTS = {
         "footer": "© 2026 Laurence Ku | AI+DQA Risk Analysis",
         "db_status": "Database Status",
         "db_connected": "✅ Hybrid Mode (SQLite + Neo4j)",
+        "download_btn": "📥 Download Word Report",
     }
 }
 
