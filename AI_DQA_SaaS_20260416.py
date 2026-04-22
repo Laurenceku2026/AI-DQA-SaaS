@@ -78,6 +78,11 @@ from docx.oxml.ns import qn
 
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
+# ========== 临时调试：打印实际读取到的密钥 ==========
+actual_secret = st.secrets.get("JWT_SECRET_KEY", "NOT_FOUND")
+st.write(f"DEBUG: JWT_SECRET_KEY = '{actual_secret}'")
+st.write(f"DEBUG: length = {len(actual_secret)}")
+# ================================================
 
 # ================== 自定义 CSS ==================
 st.markdown("""
