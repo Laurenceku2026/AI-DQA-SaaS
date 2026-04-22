@@ -1,65 +1,6 @@
 import streamlit as st
 import jwt
 import time
-
-# ========== 语言配置（与门户保持一致） ==========
-if "language" not in st.session_state:
-    # 优先从 URL 参数获取语言，否则默认中文
-    lang_param = st.query_params.get("lang", "zh")
-    st.session_state.language = lang_param if lang_param in ["zh", "en"] else "zh"
-
-TEXTS = {
-    "zh": {
-        "no_token": "❌ 未检测到登录信息，请返回门户重新登录",
-        "token_expired": "⏰ 登录已过期，请返回门户重新登录",
-        "token_invalid": "🔐 无效的登录凭证，请返回门户重新登录",
-        "welcome": "✅ 欢迎 {}，您已成功登录",
-    },
-    "en": {
-        "no_token": "❌ No login information found. Please return to the portal and log in again.",
-        "token_expired": "⏰ Login expired. Please return to the portal and log in again.",
-        "token_invalid": "🔐 Invalid credentials. Please return to the portal and log in again.",
-        "welcome": "✅ Welcome {}, you are now logged in.",
-    }
-}
-
-def t(key):
-    return TEXTS[st.session_state.language].get(key, key)
-
-# ========== JWT 验证配置 ==========
-JWT_SECRET = st.secrets.get("JWT_SECRET_KEY", "fallback-secret-key-change-me")
-
-def verify_token(token):
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        if payload["exp"] > time.time():
-            return payload["email"]
-        else:
-            return None
-    except Exception:
-        return None
-
-# ========== 执行验证 ==========
-query_params = st.query_params
-token = query_params.get("token", None)
-
-if token is None:
-    st.error(t("no_token"))
-    st.stop()
-
-email = verify_token(token)
-if email is None:
-    st.error(t("token_expired") if token else t("token_invalid"))
-    st.stop()
-
-# 验证通过，存储用户信息
-st.session_state.user_email = email
-st.success(t("welcome").format(email))
-
-# ========== 然后继续你原有的工具代码 ==========
-# ... 原有逻辑
-
-import streamlit as st
 import pandas as pd
 import json
 import os
@@ -76,13 +17,68 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
-# ================== 页面配置 ==================
+# ================== 页面配置（只调用一次，放在最前面） ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
-# ========== 临时调试：打印实际读取到的密钥 ==========
-actual_secret = st.secrets.get("JWT_SECRET_KEY", "NOT_FOUND")
-st.write(f"DEBUG: JWT_SECRET_KEY = '{actual_secret}'")
-st.write(f"DEBUG: length = {len(actual_secret)}")
-# ================================================
+
+# ================== 语言配置（用于 JWT 错误提示） ==================
+if "language" not in st.session_state:
+    lang_param = st.query_params.get("lang", "zh")
+    st.session_state.language = lang_param if lang_param in ["zh", "en"] else "zh"
+
+TEXTS_JWT = {
+    "zh": {
+        "no_token": "❌ 未检测到登录信息，请返回门户重新登录",
+        "token_expired": "⏰ 登录已过期，请返回门户重新登录",
+        "token_invalid": "🔐 无效的登录凭证，请返回门户重新登录",
+        "welcome": "✅ 欢迎 {}，您已成功登录",
+    },
+    "en": {
+        "no_token": "❌ No login information found. Please return to the portal and log in again.",
+        "token_expired": "⏰ Login expired. Please return to the portal and log in again.",
+        "token_invalid": "🔐 Invalid credentials. Please return to the portal and log in again.",
+        "welcome": "✅ Welcome {}, you are now logged in.",
+    }
+}
+
+def t_jwt(key):
+    return TEXTS_JWT[st.session_state.language].get(key, key)
+
+# ================== JWT 验证配置 ==================
+JWT_SECRET = st.secrets.get("JWT_SECRET_KEY", "fallback-secret-key-change-me")
+
+# 调试：打印密钥（测试完后可删除这两行）
+st.write(f"DEBUG: JWT_SECRET_KEY = '{JWT_SECRET}'")
+st.write(f"DEBUG: length = {len(JWT_SECRET)}")
+
+def verify_token(token):
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        if payload["exp"] > time.time():
+            return payload["email"]
+        else:
+            return None
+    except Exception as e:
+        st.error(f"验证异常: {e}")
+        return None
+
+# 从 URL 获取 token
+query_params = st.query_params
+token = query_params.get("token", None)
+
+if token is None:
+    st.error(t_jwt("no_token"))
+    st.stop()
+
+email = verify_token(token)
+if email is None:
+    st.error(t_jwt("token_expired") if token else t_jwt("token_invalid"))
+    st.stop()
+
+# 验证通过，存储用户信息
+st.session_state.user_email = email
+st.success(t_jwt("welcome").format(email))
+
+# ================== 以下是原有的业务代码（保持不变，已删除重复的 import 和 set_page_config） ==================
 
 # ================== 自定义 CSS ==================
 st.markdown("""
