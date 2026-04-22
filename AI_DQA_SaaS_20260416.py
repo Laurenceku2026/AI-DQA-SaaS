@@ -46,9 +46,6 @@ def t_jwt(key):
 # ================== JWT 验证配置 ==================
 JWT_SECRET = st.secrets.get("JWT_SECRET_KEY", "fallback-secret-key-change-me")
 
-# 调试：打印密钥（测试完后可删除这两行）
-st.write(f"DEBUG: JWT_SECRET_KEY = '{JWT_SECRET}'")
-st.write(f"DEBUG: length = {len(JWT_SECRET)}")
 
 def verify_token(token):
     try:
