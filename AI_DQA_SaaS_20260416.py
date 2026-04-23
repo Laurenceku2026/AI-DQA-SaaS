@@ -1,41 +1,3 @@
-# ==================== 子应用认证与语言设置 ====================
-import streamlit as st
-
-# 获取 URL 参数
-query_params = st.query_params
-
-# 检查用户登录状态
-if "user_id" in query_params and query_params["user_id"]:
-    st.session_state.user_id = query_params["user_id"]
-    st.session_state.user_email = query_params.get("email", [""])[0] if query_params.get("email") else ""
-    
-    # 从邮箱中提取用户名（@前面的完整部分）
-    if st.session_state.user_email and "@" in st.session_state.user_email:
-        # 修复：取 @ 前面的全部字符
-        username = st.session_state.user_email.split('@')[0]
-        st.session_state.username = username
-    else:
-        st.session_state.username = st.session_state.user_id[:8] if st.session_state.user_id else "User"
-else:
-    st.warning("请从 TechLife Portal 登录后访问")
-    st.stop()
-
-# 设置语言
-if "lang" in query_params and query_params["lang"]:
-    lang_param = query_params["lang"]
-    st.session_state.lang = lang_param if lang_param in ["zh", "en"] else "zh"
-else:
-    st.session_state.lang = "zh"
-
-# 根据语言显示用户标签
-user_label = "用户" if st.session_state.lang == "zh" else "User"
-
-# 显示用户信息（侧边栏）
-with st.sidebar:
-    st.success(f"👤 {user_label}: {st.session_state.username}")
-
-#=======APP 原代码=========================================================
-
 import streamlit as st
 import pandas as pd
 import json
@@ -52,11 +14,80 @@ from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
+from supabase import create_client  # 🆕 新增
 
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# ================== 自定义 CSS ==================
+# ================== 🆕 新增：接收门户参数和计数功能 ==================
+# 获取 URL 参数
+query_params = st.query_params
+
+if "user_id" in query_params:
+    st.session_state.user_id = query_params["user_id"]
+    st.session_state.user_email = query_params.get("email", [""])[0]
+    # 设置语言
+    if "lang" in query_params:
+        st.session_state.lang = query_params["lang"] if query_params["lang"] in ["zh", "en"] else "zh"
+    else:
+        st.session_state.lang = "zh"
+else:
+    st.warning("请从 TechLife Suite 门户登录后访问")
+    st.stop()
+
+# 🆕 Supabase 初始化（用于计数）
+@st.cache_resource
+def init_supabase():
+    try:
+        return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    except Exception:
+        return None
+
+supabase = init_supabase()
+
+# 🆕 消耗免费次数函数
+def consume_trial(user_id: str, app_name: str) -> tuple:
+    """消耗一次免费次数，返回 (是否成功, 剩余次数, 错误信息)"""
+    if not supabase:
+        return True, -1, ""
+    
+    try:
+        response = supabase.table("profiles")\
+            .select("free_trials_remaining, subscription_tier")\
+            .eq("id", user_id)\
+            .execute()
+        
+        if not response.data:
+            return False, 0, "用户不存在"
+        
+        profile = response.data[0]
+        tier = profile.get("subscription_tier", "free")
+        remaining = profile.get("free_trials_remaining", 30)
+        
+        if tier == "pro":
+            return True, -1, ""
+        
+        if remaining <= 0:
+            return False, 0, "免费次数已用完（共30次），请联系管理员升级"
+        
+        supabase.table("profiles").update({
+            "free_trials_remaining": remaining - 1
+        }).eq("id", user_id).execute()
+        
+        supabase.table("usage_logs").insert({
+            "user_id": user_id,
+            "app_name": app_name,
+            "analysis_count": 1,
+            "used_at": datetime.now().isoformat()
+        }).execute()
+        
+        return True, remaining - 1, ""
+        
+    except Exception as e:
+        return False, 0, f"计数失败: {str(e)}"
+
+# ================== 原有代码开始 ==================
+# 自定义 CSS
 st.markdown("""
 <style>
     .block-container {
@@ -95,8 +126,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ================== 初始化 Session State ==================
-if "lang" not in st.session_state:
-    st.session_state.lang = "zh"
 if "admin_logged_in" not in st.session_state:
     st.session_state.admin_logged_in = False
 if "enable_web_search" not in st.session_state:
@@ -810,7 +839,7 @@ Note: Do not bold module names in the table, and avoid using ** symbols.
 === 联网搜索结果 ===
 {web_context if web_context else "未启用"}
 
-请直接输出风险分析报告，不要添加任何开场白（如“好的”、“基于以上信息”等）。报告必须包含：
+请直接输出风险分析报告，不要添加任何开场白（如"好的"、"基于以上信息"等）。报告必须包含：
 ### 1. 产品分解
 ### 2. Top 5 潜在风险（表格：模块、失效模式、原因、严重度、发生度、探测度、RPN）
 ### 3. 关键风险缓解策略（针对RPN最高的3项）
@@ -1037,22 +1066,28 @@ product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"],
 col_center = st.columns([1, 2, 1])[1]
 with col_center:
     st.markdown('<div class="main-analyze">', unsafe_allow_html=True)
+    # 🆕 修改：在分析按钮添加计数逻辑
     if st.button(t["analyze_btn"], key="main_analyze_btn", type="primary"):
         if not product_name:
             st.error(t["product_name_missing"])
         else:
-            db = st.session_state.database
-            with st.spinner(t["generating"]):
-                report_content = generate_ai_analysis_content(
-                    product_name, product_desc,
-                    st.session_state.enable_web_search,
-                    db,
-                    lang=st.session_state.lang
-                )
-                st.session_state.report_content = report_content
-                st.session_state.last_product_name = product_name
-                st.session_state.last_product_desc = product_desc
-                st.rerun()
+            # 🆕 消耗免费次数
+            allowed, new_remaining, error_msg = consume_trial(st.session_state.user_id, "dqa")
+            if not allowed:
+                st.error(error_msg)
+            else:
+                db = st.session_state.database
+                with st.spinner(t["generating"]):
+                    report_content = generate_ai_analysis_content(
+                        product_name, product_desc,
+                        st.session_state.enable_web_search,
+                        db,
+                        lang=st.session_state.lang
+                    )
+                    st.session_state.report_content = report_content
+                    st.session_state.last_product_name = product_name
+                    st.session_state.last_product_desc = product_desc
+                    st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ================== 显示已生成的报告 ==================
@@ -1072,7 +1107,6 @@ if st.session_state.report_content:
     st.markdown(full_report_display)
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # 下载按钮
     col_download = st.columns([1,2,1])[1]
     with col_download:
         if st.button(t["download_btn"], use_container_width=True):
