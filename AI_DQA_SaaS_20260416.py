@@ -24,24 +24,26 @@ query_params = st.query_params
 
 if "user_id" in query_params:
     st.session_state.user_id = query_params["user_id"]
-    st.session_state.user_email = query_params.get("email", [""])[0]
+    st.session_state.user_email = query_params["email"]
+    
     # 从邮箱提取用户名
     if st.session_state.user_email and "@" in st.session_state.user_email:
         st.session_state.username = st.session_state.user_email.split('@')[0]
     else:
         st.session_state.username = "User"
+    
     # 设置语言
     if "lang" in query_params:
-        st.session_state.lang = query_params["lang"] if query_params["lang"] in ["zh", "en"] else "zh"
+        st.session_state.lang = query_params["lang"]
     else:
         st.session_state.lang = "zh"
+    
     # 接收剩余次数
     if "trials_left" in query_params:
         st.session_state.trials_left = int(query_params["trials_left"])
 else:
     st.warning("请从 TechLife Suite 门户登录后访问")
     st.stop()
-
 # ================== Supabase 配置（使用 HTTP 请求）==================
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_SERVICE_ROLE_KEY"]
