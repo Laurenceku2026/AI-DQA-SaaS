@@ -5,6 +5,7 @@ import os
 import sqlite3
 import openai
 import re
+import requests
 from io import BytesIO
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -14,80 +15,125 @@ from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from supabase import create_client  # 🆕 新增
 
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# ================== 🆕 新增：接收门户参数和计数功能 ==================
-# 获取 URL 参数
+# ================== 接收门户参数 ==================
 query_params = st.query_params
 
 if "user_id" in query_params:
     st.session_state.user_id = query_params["user_id"]
     st.session_state.user_email = query_params.get("email", [""])[0]
+    # 从邮箱提取用户名
+    if st.session_state.user_email and "@" in st.session_state.user_email:
+        st.session_state.username = st.session_state.user_email.split('@')[0]
+    else:
+        st.session_state.username = "User"
     # 设置语言
     if "lang" in query_params:
         st.session_state.lang = query_params["lang"] if query_params["lang"] in ["zh", "en"] else "zh"
     else:
         st.session_state.lang = "zh"
+    # 接收剩余次数
+    if "trials_left" in query_params:
+        st.session_state.trials_left = int(query_params["trials_left"])
 else:
     st.warning("请从 TechLife Suite 门户登录后访问")
     st.stop()
 
-# 🆕 Supabase 初始化（用于计数）
-@st.cache_resource
-def init_supabase():
+# ================== Supabase 配置（使用 HTTP 请求）==================
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_SERVICE_ROLE_KEY"]
+
+HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json"
+}
+
+def supabase_get(table: str, user_id: str = None, id_field: str = "id"):
+    """GET 请求"""
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    if user_id:
+        url += f"?{id_field}=eq.{user_id}"
+    response = requests.get(url, headers=HEADERS)
+    return response
+
+def supabase_patch(table: str, user_id: str, data: dict):
+    """PATCH 请求（更新）"""
+    url = f"{SUPABASE_URL}/rest/v1/{table}?id=eq.{user_id}"
+    response = requests.patch(url, headers=HEADERS, json=data)
+    return response
+
+def supabase_post(table: str, data: dict):
+    """POST 请求"""
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    response = requests.post(url, headers=HEADERS, json=data)
+    return response
+
+# ================== 获取用户剩余次数 ==================
+def get_user_remaining_trials(user_id: str) -> int:
+    """获取用户剩余次数"""
     try:
-        return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+        response = supabase_get("profiles", user_id)
+        if response.status_code == 200 and response.json():
+            remaining = response.json()[0].get("free_trials_remaining", 30)
+            return remaining
     except Exception:
-        return None
+        pass
+    return st.session_state.get("trials_left", 30)
 
-supabase = init_supabase()
-
-# 🆕 消耗免费次数函数
+# ================== 消耗免费次数 ==================
 def consume_trial(user_id: str, app_name: str) -> tuple:
     """消耗一次免费次数，返回 (是否成功, 剩余次数, 错误信息)"""
-    if not supabase:
-        return True, -1, ""
-    
     try:
-        response = supabase.table("profiles")\
-            .select("free_trials_remaining, subscription_tier")\
-            .eq("id", user_id)\
-            .execute()
-        
-        if not response.data:
+        # 获取当前剩余次数
+        resp = supabase_get("profiles", user_id)
+        if resp.status_code != 200 or not resp.json():
             return False, 0, "用户不存在"
         
-        profile = response.data[0]
-        tier = profile.get("subscription_tier", "free")
-        remaining = profile.get("free_trials_remaining", 30)
+        current = resp.json()[0].get("free_trials_remaining", 30)
+        tier = resp.json()[0].get("subscription_tier", "free")
         
+        # 专业版无限使用
         if tier == "pro":
             return True, -1, ""
         
-        if remaining <= 0:
+        if current <= 0:
             return False, 0, "免费次数已用完（共30次），请联系管理员升级"
         
-        supabase.table("profiles").update({
-            "free_trials_remaining": remaining - 1
-        }).eq("id", user_id).execute()
+        # 更新剩余次数
+        patch_resp = supabase_patch("profiles", user_id, {"free_trials_remaining": current - 1})
         
-        supabase.table("usage_logs").insert({
+        # 200 和 204 都是成功状态码
+        if patch_resp.status_code not in [200, 204]:
+            return False, 0, f"更新失败: {patch_resp.text}"
+        
+        # 记录使用日志
+        supabase_post("usage_logs", {
             "user_id": user_id,
             "app_name": app_name,
             "analysis_count": 1,
             "used_at": datetime.now().isoformat()
-        }).execute()
+        })
         
-        return True, remaining - 1, ""
+        return True, current - 1, ""
         
     except Exception as e:
         return False, 0, f"计数失败: {str(e)}"
 
-# ================== 原有代码开始 ==================
-# 自定义 CSS
+# ================== 侧边栏（显示用户信息和剩余次数）==================
+with st.sidebar:
+    st.markdown(f"### 👤 {st.session_state.username}")
+    remaining = get_user_remaining_trials(st.session_state.user_id)
+    if remaining == -1:
+        st.info("🎫 剩余免费次数: ∞ (专业版)")
+    else:
+        st.info(f"🎫 剩余免费次数: {remaining}")
+    st.markdown("---")
+
+# ================== 自定义 CSS ==================
 st.markdown("""
 <style>
     .block-container {
@@ -1026,7 +1072,8 @@ if "database" not in st.session_state:
     st.session_state.database = get_database()
     st.session_state.database.load_initial_data()
 
-# ================== 侧边栏 ==================
+# ================== 原有的侧边栏内容（保持不变，但需要在用户信息之后）==================
+# 注意：已经在前面添加了用户信息侧边栏，这里添加原有的分析系统内容
 with st.sidebar:
     st.markdown(f"## {t['sidebar_title']}")
     for item in t["basis_items"]:
@@ -1066,12 +1113,11 @@ product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"],
 col_center = st.columns([1, 2, 1])[1]
 with col_center:
     st.markdown('<div class="main-analyze">', unsafe_allow_html=True)
-    # 🆕 修改：在分析按钮添加计数逻辑
     if st.button(t["analyze_btn"], key="main_analyze_btn", type="primary"):
         if not product_name:
             st.error(t["product_name_missing"])
         else:
-            # 🆕 消耗免费次数
+            # 消耗免费次数
             allowed, new_remaining, error_msg = consume_trial(st.session_state.user_id, "dqa")
             if not allowed:
                 st.error(error_msg)
