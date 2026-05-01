@@ -228,11 +228,16 @@ if "last_product_name" not in st.session_state:
     st.session_state.last_product_name = ""
 if "last_product_desc" not in st.session_state:
     st.session_state.last_product_desc = ""
+# 新增：上传成功反馈相关
+if "upload_success" not in st.session_state:
+    st.session_state.upload_success = False
+if "upload_result" not in st.session_state:
+    st.session_state.upload_result = None
 
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
 
-# ================== Supabase 知识库类（新增）==================
+# ================== Supabase 知识库类 ==================
 class SupabaseKnowledgeDB:
     """使用 Supabase 存储知识库（持久化，不丢失）"""
     
@@ -1054,41 +1059,104 @@ def admin_settings_dialog():
             db.add_knowledge(selected_cat, new_item.strip())
             st.rerun()
     st.markdown("---")
+    
+    # ========== 导出/导入知识库（Excel）- 新增上传反馈 ==========
     st.subheader("📥 导出/导入知识库（Excel）")
-    if st.button("下载知识库模板 (Excel)"):
-        all_zh = st.session_state.database.sqlite.supabase_kb.knowledge_zh
-        max_len = max((len(all_zh.get(cat, [])) for cat in categories), default=0)
-        export_data = {}
-        for cat in categories:
-            items = all_zh.get(cat, [])
-            export_data[cat] = items + [''] * (max_len - len(items))
-        df = pd.DataFrame(export_data)
-        df.columns = ["光学 / Optical", "机械 / Mechanical", "材料 / Material", "热学 / Thermal", "电气 / Electrical", "控制 / Control"]
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name="知识库", index=False)
-        st.download_button(label="下载 Excel 文件", data=output.getvalue(), file_name=f"knowledge_base_{datetime.now().strftime('%Y%m%d')}.xlsx")
-    uploaded = st.file_uploader("上传 Excel 文件（覆盖）", type=["xlsx"])
-    if uploaded:
-        try:
-            df = pd.read_excel(uploaded, sheet_name="知识库")
-            column_mapping = {
-                "光学 / Optical": "光学", "机械 / Mechanical": "机械", "材料 / Material": "材料",
-                "热学 / Thermal": "热学", "电气 / Electrical": "电气", "控制 / Control": "控制",
-                "光学": "光学", "机械": "机械", "材料": "材料", "热学": "热学", "电气": "电气", "控制": "控制"
-            }
+    
+    # 导出部分
+    col_export, col_spacer = st.columns([1, 3])
+    with col_export:
+        if st.button("📥 下载知识库模板 (Excel)", use_container_width=True):
+            all_zh = st.session_state.database.sqlite.supabase_kb.knowledge_zh
+            max_len = max((len(all_zh.get(cat, [])) for cat in categories), default=0)
+            export_data = {}
             for cat in categories:
-                db.clear_knowledge_category(cat)
-            for excel_col, cat in column_mapping.items():
-                if excel_col in df.columns:
-                    items = df[excel_col].dropna().astype(str).tolist()
-                    items = [item.strip() for item in items if item.strip()]
-                    for item in items:
-                        db.add_knowledge(cat, item)
-            st.success(f"知识库已更新！共导入 {sum(len(st.session_state.database.sqlite.supabase_kb.knowledge_zh[cat]) for cat in categories)} 条记录。")
-            st.rerun()
-        except Exception as e:
-            st.error(f"导入失败：{e}")
+                items_list = all_zh.get(cat, [])
+                export_data[cat] = items_list + [''] * (max_len - len(items_list))
+            df = pd.DataFrame(export_data)
+            df.columns = ["光学 / Optical", "机械 / Mechanical", "材料 / Material", "热学 / Thermal", "电气 / Electrical", "控制 / Control"]
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name="知识库", index=False)
+            st.download_button(
+                label="点击下载", 
+                data=output.getvalue(), 
+                file_name=f"knowledge_base_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                use_container_width=True
+            )
+    
+    st.markdown("---")
+    
+    # 导入部分
+    st.markdown("**📤 上传 Excel 文件（覆盖现有知识库）**")
+    uploaded = st.file_uploader("选择 Excel 文件", type=["xlsx"], key="knowledge_upload", label_visibility="collapsed")
+    
+    if uploaded:
+        with st.spinner("⏳ 正在上传并保存到 Supabase..."):
+            try:
+                df = pd.read_excel(uploaded, sheet_name="知识库")
+                
+                column_mapping = {
+                    "光学 / Optical": "光学", "机械 / Mechanical": "机械", "材料 / Material": "材料",
+                    "热学 / Thermal": "热学", "电气 / Electrical": "电气", "控制 / Control": "控制",
+                    "光学": "光学", "机械": "机械", "材料": "材料", "热学": "热学", "电气": "电气", "控制": "控制"
+                }
+                
+                total_imported = 0
+                category_counts = {}
+                
+                # 清空现有数据
+                for cat in categories:
+                    db.clear_knowledge_category(cat)
+                
+                # 导入新数据
+                for excel_col, cat in column_mapping.items():
+                    if excel_col in df.columns:
+                        items_list = df[excel_col].dropna().astype(str).tolist()
+                        items_list = [item.strip() for item in items_list if item.strip()]
+                        category_counts[cat] = len(items_list)
+                        for item in items_list:
+                            db.add_knowledge(cat, item)
+                            total_imported += 1
+                
+                # 保存成功消息到 session_state
+                st.session_state.upload_success = True
+                st.session_state.upload_result = {
+                    "total": total_imported,
+                    "details": category_counts
+                }
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ 导入失败：{e}")
+    
+    # 显示上传成功对话框
+    if st.session_state.get("upload_success", False):
+        result = st.session_state.upload_result
+        
+        # 成功提示
+        st.balloons()
+        st.success(f"✅ **上传成功！** 共导入 **{result['total']}** 条记录到 Supabase")
+        
+        # 详细信息
+        with st.expander("📊 查看各分类导入详情", expanded=True):
+            for cat in categories:
+                count = result['details'].get(cat, 0)
+                if count > 0:
+                    st.write(f"✅ **{cat}**: {count} 条")
+                else:
+                    st.write(f"⚪ **{cat}**: 0 条")
+        
+        st.info("💡 **数据已永久保存到 Supabase**，不会因应用重启、重新部署而丢失！")
+        
+        # 关闭按钮
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("✅ 确定关闭", use_container_width=True, type="primary"):
+                st.session_state.upload_success = False
+                st.session_state.upload_result = None
+                st.rerun()
+    
     st.markdown("---")
     st.subheader("⚙️ LLM API 临时配置")
     new_key = st.text_input("DeepSeek API Key", value=st.session_state.temp_api_key, type="password")
