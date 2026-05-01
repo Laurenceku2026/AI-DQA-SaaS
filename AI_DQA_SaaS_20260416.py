@@ -92,6 +92,13 @@ def supabase_post(table: str, data: dict):
     response = requests.post(url, headers=HEADERS, json=data)
     return response
 
+def supabase_delete(table: str, filters: dict):
+    """DELETE 请求"""
+    filter_str = "&".join([f"{k}=eq.{v}" for k, v in filters.items()])
+    url = f"{SUPABASE_URL}/rest/v1/{table}?{filter_str}"
+    response = requests.delete(url, headers=HEADERS)
+    return response
+
 def get_user_remaining_trials(user_id: str) -> int:
     """从数据库实时获取剩余次数"""
     try:
@@ -225,6 +232,153 @@ if "last_product_desc" not in st.session_state:
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
 
+# ================== Supabase 知识库类（新增）==================
+class SupabaseKnowledgeDB:
+    """使用 Supabase 存储知识库（持久化，不丢失）"""
+    
+    def __init__(self):
+        self.supabase_url = SUPABASE_URL
+        self.headers = HEADERS
+        self.categories = ["光学", "机械", "材料", "热学", "电气", "控制"]
+        self._load_cache()
+    
+    def _load_cache(self):
+        """加载所有知识库到缓存（提高性能）"""
+        try:
+            response = requests.get(
+                f"{self.supabase_url}/rest/v1/knowledge_base?order=id",
+                headers=self.headers
+            )
+            if response.status_code == 200:
+                rows = response.json()
+                self.knowledge_zh = {cat: [] for cat in self.categories}
+                self.knowledge_en = {cat: [] for cat in self.categories}
+                for row in rows:
+                    cat = row.get("category")
+                    if cat in self.knowledge_zh:
+                        self.knowledge_zh[cat].append(row.get("content", ""))
+                        self.knowledge_en[cat].append(row.get("content_en", ""))
+            else:
+                self._init_empty_cache()
+        except Exception as e:
+            print(f"加载缓存失败: {e}")
+            self._init_empty_cache()
+    
+    def _init_empty_cache(self):
+        self.knowledge_zh = {cat: [] for cat in self.categories}
+        self.knowledge_en = {cat: [] for cat in self.categories}
+    
+    def get_knowledge_by_category(self, category: str) -> List[str]:
+        """获取指定分类的知识条目"""
+        lang = st.session_state.lang
+        if lang == "zh":
+            return self.knowledge_zh.get(category, [])
+        else:
+            return self.knowledge_en.get(category, [])
+    
+    def add_knowledge(self, category: str, content: str):
+        """添加知识条目（自动存储双语）"""
+        lang = st.session_state.lang
+        if lang == "zh":
+            zh_text = content
+            en_text = translate_text(content, "en")
+        else:
+            en_text = content
+            zh_text = translate_text(content, "zh")
+        
+        try:
+            response = requests.post(
+                f"{self.supabase_url}/rest/v1/knowledge_base",
+                headers=self.headers,
+                json={
+                    "category": category,
+                    "content": zh_text,
+                    "content_en": en_text
+                }
+            )
+            if response.status_code in [200, 201, 204]:
+                self._load_cache()  # 刷新缓存
+                return True
+        except Exception as e:
+            print(f"添加失败: {e}")
+        return False
+    
+    def delete_knowledge(self, category: str, content: str):
+        """删除知识条目"""
+        lang = st.session_state.lang
+        try:
+            # 先查找要删除的记录
+            if lang == "zh":
+                response = requests.get(
+                    f"{self.supabase_url}/rest/v1/knowledge_base?category=eq.{category}&content=eq.{content}",
+                    headers=self.headers
+                )
+            else:
+                response = requests.get(
+                    f"{self.supabase_url}/rest/v1/knowledge_base?category=eq.{category}&content_en=eq.{content}",
+                    headers=self.headers
+                )
+            
+            if response.status_code == 200 and response.json():
+                record_id = response.json()[0]["id"]
+                delete_resp = requests.delete(
+                    f"{self.supabase_url}/rest/v1/knowledge_base?id=eq.{record_id}",
+                    headers=self.headers
+                )
+                if delete_resp.status_code in [200, 204]:
+                    self._load_cache()
+                    return True
+        except Exception as e:
+            print(f"删除失败: {e}")
+        return False
+    
+    def clear_knowledge_category(self, category: str):
+        """清空指定分类的所有条目"""
+        try:
+            response = requests.delete(
+                f"{self.supabase_url}/rest/v1/knowledge_base?category=eq.{category}",
+                headers=self.headers
+            )
+            if response.status_code in [200, 204]:
+                self._load_cache()
+                return True
+        except Exception as e:
+            print(f"清空失败: {e}")
+        return False
+    
+    def get_all_knowledge(self) -> Dict[str, List[str]]:
+        """获取所有知识条目"""
+        lang = st.session_state.lang
+        if lang == "zh":
+            return self.knowledge_zh
+        else:
+            return self.knowledge_en
+    
+    def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
+        """搜索知识库"""
+        if not keywords.strip():
+            return []
+        lang = st.session_state.lang
+        try:
+            # 使用 Supabase 的 ilike 搜索
+            response = requests.get(
+                f"{self.supabase_url}/rest/v1/knowledge_base?or=(content.ilike.%25{keywords}%25,content_en.ilike.%25{keywords}%25)&limit={limit}",
+                headers=self.headers
+            )
+            if response.status_code == 200:
+                rows = response.json()
+                results = []
+                for row in rows:
+                    if lang == "zh":
+                        results.append(row.get("content", ""))
+                    else:
+                        results.append(row.get("content_en", ""))
+                return results
+        except Exception as e:
+            print(f"搜索失败: {e}")
+        return []
+
+
 # ================== 数据库抽象接口 ==================
 class RiskDatabase:
     def get_risks(self, product_type: str) -> List[Dict]:
@@ -248,58 +402,29 @@ class RiskDatabase:
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         raise NotImplementedError
 
-# ================== SQLite 实现 ==================
+
+# ================== SQLite 实现（只用于产品风险数据）==================
 class SQLiteDatabase(RiskDatabase):
     def __init__(self):
+        # 使用 Supabase 知识库替代 SQLite 知识库
+        self.supabase_kb = SupabaseKnowledgeDB()
+        # SQLite 只用于产品风险数据（这些数据量小，不常变）
         self.conn = sqlite3.connect('app_data.db', check_same_thread=False)
         self.init_tables()
-        self.migrate_existing_knowledge()
         self.load_caches()
 
     def init_tables(self):
         cursor = self.conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS knowledge_base
-                          (category TEXT, content TEXT, content_en TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS product_risks
                           (product_type TEXT, module TEXT, failure_mode TEXT, cause TEXT,
                            severity INTEGER, occurrence INTEGER, detection INTEGER, mitigation TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS industry_risks
                           (category TEXT, product_type TEXT, failure_mode TEXT, cause TEXT,
                            mitigation TEXT, source TEXT)''')
-        cursor.execute("PRAGMA table_info(knowledge_base)")
-        cols = [col[1] for col in cursor.fetchall()]
-        if 'content_en' not in cols:
-            cursor.execute("ALTER TABLE knowledge_base ADD COLUMN content_en TEXT")
-        self.conn.commit()
-
-    def migrate_existing_knowledge(self):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT rowid, category, content FROM knowledge_base WHERE content_en IS NULL OR content_en = ''")
-        rows = cursor.fetchall()
-        if not rows:
-            return
-        for rowid, cat, zh_text in rows:
-            en_text = translate_text(zh_text, "en")
-            cursor.execute("UPDATE knowledge_base SET content_en = ? WHERE rowid = ?", (en_text, rowid))
         self.conn.commit()
 
     def load_caches(self):
         cursor = self.conn.cursor()
-        cursor.execute("SELECT category, content, content_en FROM knowledge_base")
-        rows = cursor.fetchall()
-        self.knowledge_zh = {"光学": [], "机械": [], "材料": [], "热学": [], "电气": [], "控制": []}
-        self.knowledge_en = {"光学": [], "机械": [], "材料": [], "热学": [], "电气": [], "控制": []}
-        for cat, zh, en in rows:
-            if cat in self.knowledge_zh:
-                self.knowledge_zh[cat].append(zh)
-                if en:
-                    self.knowledge_en[cat].append(en)
-                else:
-                    en_trans = translate_text(zh, "en")
-                    self.knowledge_en[cat].append(en_trans)
-                    cursor.execute("UPDATE knowledge_base SET content_en = ? WHERE category = ? AND content = ?", (en_trans, cat, zh))
-        self.conn.commit()
-
         cursor.execute("SELECT product_type, module, failure_mode, cause, severity, occurrence, detection, mitigation FROM product_risks")
         rows = cursor.fetchall()
         self.product_risks = {}
@@ -334,72 +459,24 @@ class SQLiteDatabase(RiskDatabase):
             return results[0][:200]
         return "建议参考行业规范和设计指南进行优化。"
 
+    # 以下方法委托给 supabase_kb
     def get_knowledge_by_category(self, category: str) -> List[str]:
-        lang = st.session_state.lang
-        if lang == "zh":
-            return self.knowledge_zh.get(category, [])
-        else:
-            return self.knowledge_en.get(category, [])
+        return self.supabase_kb.get_knowledge_by_category(category)
 
     def add_knowledge(self, category: str, content: str):
-        lang = st.session_state.lang
-        if lang == "zh":
-            zh_text = content
-            en_text = translate_text(content, "en")
-        else:
-            en_text = content
-            zh_text = translate_text(content, "zh")
-        cursor = self.conn.cursor()
-        cursor.execute("INSERT INTO knowledge_base (category, content, content_en) VALUES (?, ?, ?)",
-                       (category, zh_text, en_text))
-        self.conn.commit()
-        self.load_caches()
+        self.supabase_kb.add_knowledge(category, content)
 
     def delete_knowledge(self, category: str, content: str):
-        lang = st.session_state.lang
-        if lang == "zh":
-            cursor = self.conn.cursor()
-            cursor.execute("DELETE FROM knowledge_base WHERE category = ? AND content = ?", (category, content))
-        else:
-            cursor = self.conn.cursor()
-            cursor.execute("DELETE FROM knowledge_base WHERE category = ? AND content_en = ?", (category, content))
-        self.conn.commit()
-        self.load_caches()
+        self.supabase_kb.delete_knowledge(category, content)
 
     def clear_knowledge_category(self, category: str):
-        cursor = self.conn.cursor()
-        cursor.execute("DELETE FROM knowledge_base WHERE category = ?", (category,))
-        self.conn.commit()
-        self.load_caches()
+        self.supabase_kb.clear_knowledge_category(category)
 
     def get_all_knowledge(self) -> Dict[str, List[str]]:
-        lang = st.session_state.lang
-        if lang == "zh":
-            return self.knowledge_zh
-        else:
-            return self.knowledge_en
+        return self.supabase_kb.get_all_knowledge()
 
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
-        if not keywords.strip():
-            return []
-        cursor = self.conn.cursor()
-        query = """
-            SELECT content, content_en FROM knowledge_base 
-            WHERE content LIKE ? OR content_en LIKE ?
-            LIMIT ?
-        """
-        like_pattern = f"%{keywords}%"
-        cursor.execute(query, (like_pattern, like_pattern, limit))
-        rows = cursor.fetchall()
-        lang = st.session_state.lang
-        results = []
-        for row in rows:
-            zh, en = row
-            if lang == "zh":
-                results.append(zh)
-            else:
-                results.append(en)
-        return results
+        return self.supabase_kb.search_knowledge(keywords, limit)
 
     def load_initial_data(self):
         cursor = self.conn.cursor()
@@ -415,6 +492,7 @@ class SQLiteDatabase(RiskDatabase):
         cursor.execute("DELETE FROM industry_risks")
         for row in industry_data:
             cursor.execute("INSERT INTO industry_risks (category, product_type, failure_mode, cause, mitigation, source) VALUES (?,?,?,?,?,?)", row)
+        
         cursor.execute("SELECT COUNT(*) FROM product_risks")
         if cursor.fetchone()[0] == 0:
             default_risks = [
@@ -430,6 +508,7 @@ class SQLiteDatabase(RiskDatabase):
         self.conn.commit()
         self.load_caches()
 
+
 # ================== Neo4j 实现 ==================
 class Neo4jDatabase(RiskDatabase):
     def __init__(self):
@@ -437,7 +516,6 @@ class Neo4jDatabase(RiskDatabase):
         self.connect()
         if self.driver:
             self._init_constraints()
-            self._migrate_existing_knowledge()
 
     def connect(self):
         try:
@@ -462,18 +540,6 @@ class Neo4jDatabase(RiskDatabase):
                 session.run("CREATE INDEX knowledge_content IF NOT EXISTS FOR (k:Knowledge) ON (k.content)")
                 session.run("CREATE INDEX knowledge_content_en IF NOT EXISTS FOR (k:Knowledge) ON (k.content_en)")
             except: pass
-
-    def _migrate_existing_knowledge(self):
-        if not self.driver: return
-        with self.driver.session() as session:
-            result = session.run("MATCH (k:Knowledge) WHERE k.content_en IS NULL RETURN k.category AS cat, k.content AS content, id(k) AS id")
-            for rec in result:
-                cat, zh_text, nid = rec["cat"], rec["content"], rec["id"]
-                en_text = translate_text(zh_text, "en") if re.search(r'[\u4e00-\u9fff]', zh_text) else zh_text
-                if not re.search(r'[\u4e00-\u9fff]', zh_text):
-                    zh_text = translate_text(zh_text, "zh")
-                session.run("MATCH (k:Knowledge) WHERE id(k)=$id SET k.content_en=$en, k.content=$zh",
-                            {"id": nid, "en": en_text, "zh": zh_text})
 
     def _query(self, query, params=None):
         if not self.driver: return []
@@ -599,6 +665,7 @@ class Neo4jDatabase(RiskDatabase):
     def load_initial_data(self):
         pass
 
+
 # ================== 混合数据库 ==================
 class HybridDatabase(RiskDatabase):
     def __init__(self):
@@ -672,8 +739,10 @@ class HybridDatabase(RiskDatabase):
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         return self.sqlite.search_knowledge(keywords, limit)
 
+
 def get_database() -> RiskDatabase:
     return HybridDatabase()
+
 
 # ================== DeepSeek 客户端 ==================
 def get_openai_client():
@@ -682,6 +751,7 @@ def get_openai_client():
     if not api_key:
         return None, "未配置 API Key"
     return openai.OpenAI(api_key=api_key, base_url=base_url), None
+
 
 def call_deepseek(prompt: str, max_tokens=4000) -> str:
     client, error = get_openai_client()
@@ -698,6 +768,7 @@ def call_deepseek(prompt: str, max_tokens=4000) -> str:
         return response.choices[0].message.content
     except Exception as e:
         return f"AI 调用失败: {str(e)}"
+
 
 def translate_text(text: str, target_lang: str) -> str:
     if not text or not text.strip():
@@ -716,6 +787,7 @@ def translate_text(text: str, target_lang: str) -> str:
     st.session_state.translation_cache[cache_key] = translated
     return translated
 
+
 # ================== 联网搜索 ==================
 def web_search(query: str, max_results=3) -> str:
     try:
@@ -729,6 +801,7 @@ def web_search(query: str, max_results=3) -> str:
         return "\n".join(output)
     except Exception as e:
         return f"搜索失败: {str(e)}"
+
 
 # ================== 清理 AI 响应 ==================
 def clean_ai_response(text: str, lang: str = "zh") -> str:
@@ -747,11 +820,13 @@ def clean_ai_response(text: str, lang: str = "zh") -> str:
             text = '\n'.join(lines[1:])
     return text.strip()
 
+
 # ================== Markdown 转 Word ==================
 def clean_markdown_text(text: str) -> str:
     text = re.sub(r'\*\*', '', text)
     text = re.sub(r'<br\s*/?>', '\n', text)
     return text
+
 
 def markdown_to_docx(md_text: str, doc: Document):
     lines = md_text.split('\n')
@@ -809,6 +884,7 @@ def markdown_to_docx(md_text: str, doc: Document):
             doc.add_paragraph()
         i += 1
 
+
 def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str, lang: str = "zh") -> BytesIO:
     current_lang = st.session_state.get("lang", "zh")
     doc = Document()
@@ -856,6 +932,7 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
     doc.save(doc_bytes)
     doc_bytes.seek(0)
     return doc_bytes
+
 
 def generate_ai_analysis_content(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase, lang: str = "zh") -> str:
     search_keywords = f"{product_name} {product_desc}"
@@ -922,6 +999,7 @@ Note: Do not bold module names in the table, and avoid using ** symbols.
     raw = call_deepseek(prompt, max_tokens=4000)
     return clean_ai_response(raw, lang)
 
+
 # ================== 管理员设置弹窗 ==================
 @st.dialog("管理员设置", width="large")
 def admin_settings_dialog():
@@ -945,14 +1023,14 @@ def admin_settings_dialog():
     db = st.session_state.database
     neo_available = hasattr(db, 'neo4j_available') and db.neo4j_available
     st.json({
-        "当前模式": "混合数据库 (SQLite + Neo4j)",
+        "当前模式": "混合数据库 (SQLite + Neo4j + Supabase知识库)",
         "Neo4j 连接": "✅ 已连接" if neo_available else "⚠️ 未连接（仅使用 SQLite）",
+        "Supabase 知识库": "✅ 已连接（持久化存储）",
         "联网搜索": "启用" if st.session_state.enable_web_search else "禁用",
-        "DeepSeek API": "已配置" if (st.session_state.temp_api_key or st.secrets.get("DEEPSEEK_API_KEY")) else "未配置",
-        "双向检索": "✅ 已启用"
+        "DeepSeek API": "已配置" if (st.session_state.temp_api_key or st.secrets.get("DEEPSEEK_API_KEY")) else "未配置"
     })
     st.markdown("---")
-    st.subheader("📚 知识库管理（双语）")
+    st.subheader("📚 知识库管理（双语，存储在 Supabase，永久保存）")
     categories = ["光学", "机械", "材料", "热学", "电气", "控制"]
     selected_cat = st.selectbox("选择分类", categories)
     items = db.get_knowledge_by_category(selected_cat)
@@ -978,7 +1056,7 @@ def admin_settings_dialog():
     st.markdown("---")
     st.subheader("📥 导出/导入知识库（Excel）")
     if st.button("下载知识库模板 (Excel)"):
-        all_zh = st.session_state.database.sqlite.knowledge_zh
+        all_zh = st.session_state.database.sqlite.supabase_kb.knowledge_zh
         max_len = max((len(all_zh.get(cat, [])) for cat in categories), default=0)
         export_data = {}
         for cat in categories:
@@ -1007,7 +1085,7 @@ def admin_settings_dialog():
                     items = [item.strip() for item in items if item.strip()]
                     for item in items:
                         db.add_knowledge(cat, item)
-            st.success(f"知识库已更新！共导入 {sum(len(st.session_state.database.sqlite.knowledge_zh[cat]) for cat in categories)} 条记录。")
+            st.success(f"知识库已更新！共导入 {sum(len(st.session_state.database.sqlite.supabase_kb.knowledge_zh[cat]) for cat in categories)} 条记录。")
             st.rerun()
         except Exception as e:
             st.error(f"导入失败：{e}")
@@ -1022,6 +1100,7 @@ def admin_settings_dialog():
         st.session_state.temp_model = new_model
         st.rerun()
 
+
 # ================== 右上角按钮 ==================
 col_left, col_spacer, col_zh, col_en, col_gear = st.columns([5, 2, 1.8, 1.8, 1])
 with col_zh:
@@ -1035,6 +1114,7 @@ with col_en:
 with col_gear:
     if st.button("⚙️", key="settings_btn", use_container_width=True):
         admin_settings_dialog()
+
 
 # ================== 多语言文本 ==================
 TEXTS = {
@@ -1060,7 +1140,7 @@ TEXTS = {
         "generating": "AI 正在分析中，请稍候...",
         "footer": "© 2026 Laurence Ku | AI+DQA 风险分析",
         "db_status": "数据库状态",
-        "db_connected": "✅ 混合模式 (SQLite + Neo4j)",
+        "db_connected": "✅ 混合模式 (SQLite + Neo4j + Supabase知识库)",
         "download_btn": "📥 下载 Word 报告",
     },
     "en": {
@@ -1085,7 +1165,7 @@ TEXTS = {
         "generating": "AI is analyzing, please wait...",
         "footer": "© 2026 Laurence Ku | AI+DQA Risk Analysis",
         "db_status": "Database Status",
-        "db_connected": "✅ Hybrid Mode (SQLite + Neo4j)",
+        "db_connected": "✅ Hybrid Mode (SQLite + Neo4j + Supabase Knowledge Base)",
         "download_btn": "📥 Download Word Report",
     }
 }
