@@ -22,6 +22,15 @@ st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", lay
 # ================== 接收门户参数 ==================
 query_params = st.query_params
 
+
+def set_app_language(lang: str):
+    """同步 session 与 URL 语言，避免 query_params 在 rerun 时覆盖用户选择。"""
+    if lang not in ("zh", "en"):
+        lang = "zh"
+    st.session_state.lang = lang
+    st.query_params["lang"] = lang
+
+
 if "user_id" in query_params:
     # 获取 user_id
     user_id_val = query_params["user_id"]
@@ -43,15 +52,15 @@ if "user_id" in query_params:
     else:
         st.session_state.username = "User"
     
-    # 设置语言（只在首次进入时读取 query 参数，避免用户切换后被 URL 再次覆盖）
+    # 设置语言（仅首次进入时从 URL 读取）
     if "lang" not in st.session_state:
         if "lang" in query_params:
             lang_val = query_params["lang"]
             if isinstance(lang_val, list):
                 lang_val = lang_val[0]
-            st.session_state.lang = lang_val if lang_val in ["zh", "en"] else "zh"
+            set_app_language(lang_val if lang_val in ["zh", "en"] else "zh")
         else:
-            st.session_state.lang = "zh"
+            set_app_language("zh")
     
     # 接收剩余次数（仅用于初始显示）
     if "trials_left" in query_params:
@@ -1174,11 +1183,11 @@ def admin_settings_dialog():
 col_left, col_spacer, col_zh, col_en, col_gear = st.columns([5, 2, 1.8, 1.8, 1])
 with col_zh:
     if st.button("🇨🇳 中文", key="zh_btn", use_container_width=True):
-        st.session_state.lang = "zh"
+        set_app_language("zh")
         st.rerun()
 with col_en:
     if st.button("🇬🇧 English", key="en_btn", use_container_width=True):
-        st.session_state.lang = "en"
+        set_app_language("en")
         st.rerun()
 with col_gear:
     if st.button("⚙️", key="settings_btn", use_container_width=True):
