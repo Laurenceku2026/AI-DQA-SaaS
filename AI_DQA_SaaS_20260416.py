@@ -9,7 +9,6 @@ import requests
 from io import BytesIO
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
-from duckduckgo_search import DDGS
 from neo4j import GraphDatabase
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
@@ -247,151 +246,18 @@ if "upload_result" not in st.session_state:
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
 
-# ================== Supabase 知识库类 ==================
-class SupabaseKnowledgeDB:
-    """使用 Supabase 存储知识库（持久化，不丢失）"""
-    
-    def __init__(self):
-        self.supabase_url = SUPABASE_URL
-        self.headers = HEADERS
-        self.categories = ["光学", "机械", "材料", "热学", "电气", "控制"]
-        self._load_cache()
-    
-    def _load_cache(self):
-        """加载所有知识库到缓存（提高性能）"""
-        try:
-            response = requests.get(
-                f"{self.supabase_url}/rest/v1/knowledge_base?order=id",
-                headers=self.headers
-            )
-            if response.status_code == 200:
-                rows = response.json()
-                self.knowledge_zh = {cat: [] for cat in self.categories}
-                self.knowledge_en = {cat: [] for cat in self.categories}
-                for row in rows:
-                    cat = row.get("category")
-                    if cat in self.knowledge_zh:
-                        self.knowledge_zh[cat].append(row.get("content", ""))
-                        self.knowledge_en[cat].append(row.get("content_en", ""))
-            else:
-                self._init_empty_cache()
-        except Exception as e:
-            print(f"加载缓存失败: {e}")
-            self._init_empty_cache()
-    
-    def _init_empty_cache(self):
-        self.knowledge_zh = {cat: [] for cat in self.categories}
-        self.knowledge_en = {cat: [] for cat in self.categories}
-    
-    def get_knowledge_by_category(self, category: str) -> List[str]:
-        """获取指定分类的知识条目"""
-        lang = st.session_state.lang
-        if lang == "zh":
-            return self.knowledge_zh.get(category, [])
-        else:
-            return self.knowledge_en.get(category, [])
-    
-    def add_knowledge(self, category: str, content: str):
-        """添加知识条目（自动存储双语）"""
-        lang = st.session_state.lang
-        if lang == "zh":
-            zh_text = content
-            en_text = translate_text(content, "en")
-        else:
-            en_text = content
-            zh_text = translate_text(content, "zh")
-        
-        try:
-            response = requests.post(
-                f"{self.supabase_url}/rest/v1/knowledge_base",
-                headers=self.headers,
-                json={
-                    "category": category,
-                    "content": zh_text,
-                    "content_en": en_text
-                }
-            )
-            if response.status_code in [200, 201, 204]:
-                self._load_cache()  # 刷新缓存
-                return True
-        except Exception as e:
-            print(f"添加失败: {e}")
-        return False
-    
-    def delete_knowledge(self, category: str, content: str):
-        """删除知识条目"""
-        lang = st.session_state.lang
-        try:
-            # 先查找要删除的记录
-            if lang == "zh":
-                response = requests.get(
-                    f"{self.supabase_url}/rest/v1/knowledge_base?category=eq.{category}&content=eq.{content}",
-                    headers=self.headers
-                )
-            else:
-                response = requests.get(
-                    f"{self.supabase_url}/rest/v1/knowledge_base?category=eq.{category}&content_en=eq.{content}",
-                    headers=self.headers
-                )
-            
-            if response.status_code == 200 and response.json():
-                record_id = response.json()[0]["id"]
-                delete_resp = requests.delete(
-                    f"{self.supabase_url}/rest/v1/knowledge_base?id=eq.{record_id}",
-                    headers=self.headers
-                )
-                if delete_resp.status_code in [200, 204]:
-                    self._load_cache()
-                    return True
-        except Exception as e:
-            print(f"删除失败: {e}")
-        return False
-    
-    def clear_knowledge_category(self, category: str):
-        """清空指定分类的所有条目"""
-        try:
-            response = requests.delete(
-                f"{self.supabase_url}/rest/v1/knowledge_base?category=eq.{category}",
-                headers=self.headers
-            )
-            if response.status_code in [200, 204]:
-                self._load_cache()
-                return True
-        except Exception as e:
-            print(f"清空失败: {e}")
-        return False
-    
-    def get_all_knowledge(self) -> Dict[str, List[str]]:
-        """获取所有知识条目"""
-        lang = st.session_state.lang
-        if lang == "zh":
-            return self.knowledge_zh
-        else:
-            return self.knowledge_en
-    
-    def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
-        """搜索知识库"""
-        if not keywords.strip():
-            return []
-        lang = st.session_state.lang
-        try:
-            # 使用 Supabase 的 ilike 搜索
-            response = requests.get(
-                f"{self.supabase_url}/rest/v1/knowledge_base?or=(content.ilike.%25{keywords}%25,content_en.ilike.%25{keywords}%25)&limit={limit}",
-                headers=self.headers
-            )
-            if response.status_code == 200:
-                rows = response.json()
-                results = []
-                for row in rows:
-                    if lang == "zh":
-                        results.append(row.get("content", ""))
-                    else:
-                        results.append(row.get("content_en", ""))
-                return results
-        except Exception as e:
-            print(f"搜索失败: {e}")
-        return []
+from knowledge_base_utils import SupabaseKnowledgeDB, is_chinese
+from web_search_utils import web_search_dual as shared_web_search_dual
+
+
+def create_supabase_knowledge_db() -> SupabaseKnowledgeDB:
+    return SupabaseKnowledgeDB(
+        SUPABASE_URL,
+        SUPABASE_KEY,
+        translate_to_en=lambda text: translate_text(text, "en"),
+        translate_to_zh=lambda text: translate_text(text, "zh"),
+        ui_lang_getter=lambda: st.session_state.get("lang", "zh"),
+    )
 
 
 # ================== 数据库抽象接口 ==================
@@ -422,7 +288,7 @@ class RiskDatabase:
 class SQLiteDatabase(RiskDatabase):
     def __init__(self):
         # 使用 Supabase 知识库替代 SQLite 知识库
-        self.supabase_kb = SupabaseKnowledgeDB()
+        self.supabase_kb = create_supabase_knowledge_db()
         # SQLite 只用于产品风险数据（这些数据量小，不常变）
         self.conn = sqlite3.connect('app_data.db', check_same_thread=False)
         self.init_tables()
@@ -492,6 +358,9 @@ class SQLiteDatabase(RiskDatabase):
 
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         return self.supabase_kb.search_knowledge(keywords, limit)
+
+    def search_knowledge_full(self, keywords: str, limit: int = 10) -> List[str]:
+        return self.supabase_kb.search_knowledge_full(keywords, limit)
 
     def load_initial_data(self):
         cursor = self.conn.cursor()
@@ -754,6 +623,9 @@ class HybridDatabase(RiskDatabase):
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         return self.sqlite.search_knowledge(keywords, limit)
 
+    def search_knowledge_full(self, keywords: str, limit: int = 10) -> List[str]:
+        return self.sqlite.search_knowledge_full(keywords, limit)
+
 
 def get_database() -> RiskDatabase:
     return HybridDatabase()
@@ -803,19 +675,16 @@ def translate_text(text: str, target_lang: str) -> str:
     return translated
 
 
-# ================== 联网搜索 ==================
-def web_search(query: str, max_results=3) -> str:
-    try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
-        if not results:
-            return "未找到相关结果。"
-        output = []
-        for r in results:
-            output.append(f"- **{r['title']}: {r['body'][:300]}... [来源]({r['href']})")
-        return "\n".join(output)
-    except Exception as e:
-        return f"搜索失败: {str(e)}"
+# ================== 联网搜索（双语双向，中文优先）==================
+def web_search_dual(query: str, lang: str) -> str:
+    """调用共享双语双向联网检索模块。"""
+    return shared_web_search_dual(
+        query=query,
+        lang=lang,
+        translate_to_en=lambda text: translate_text(text, "en"),
+        max_results_each=3,
+        max_output=5,
+    )
 
 
 # ================== 清理 AI 响应 ==================
@@ -951,7 +820,7 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
 
 def generate_ai_analysis_content(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase, lang: str = "zh") -> str:
     search_keywords = f"{product_name} {product_desc}"
-    kb_items = db.search_knowledge(search_keywords, limit=10)
+    kb_items = db.search_knowledge_full(search_keywords, limit=10)
     kb_text = "\n".join(kb_items) if kb_items else ("No relevant knowledge found." if lang == "en" else "暂无相关经验知识")
     risks = db.get_risks(product_name)
     internal_text = "\n".join([f"- {r['module']}: {r['failure_mode']} (Cause: {r['cause']})" for r in risks[:5]])
@@ -959,7 +828,8 @@ def generate_ai_analysis_content(product_name: str, product_desc: str, enable_we
     web_context = ""
     if enable_web:
         with st.spinner("Searching online..." if lang == "en" else "正在联网搜索..."):
-            web_context = web_search(f"{product_name} failure case", max_results=3)
+            query = f"{product_name} failure case" if lang == "en" else f"{product_name} 失效案例"
+            web_context = web_search_dual(query, lang)
     
     if lang == "en":
         prompt = f"""
