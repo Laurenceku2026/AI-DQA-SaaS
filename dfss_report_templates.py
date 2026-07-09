@@ -8,12 +8,17 @@ from datetime import datetime
 from io import BytesIO
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from openpyxl import load_workbook
-
 try:
     from docx import Document
 except ImportError:  # pragma: no cover
     Document = None
+
+
+def _load_workbook(source):
+    """Lazy import so module load does not fail if openpyxl is temporarily unavailable."""
+    from openpyxl import load_workbook
+
+    return load_workbook(source)
 
 TEMPLATE_EXTENSIONS = (".xlsx", ".xls", ".docx")
 DFMEA_SHEET_NAME = "DFMEA标准表格"
@@ -120,7 +125,7 @@ def extract_template_outline(template_bytes: bytes, filename: str) -> str:
     """Extract template headers / placeholders for DeepSeek planning."""
     ext = os.path.splitext(filename)[1].lower()
     if ext in (".xlsx", ".xls"):
-        wb = load_workbook(BytesIO(template_bytes), data_only=True)
+        wb = _load_workbook(BytesIO(template_bytes), data_only=True)
         ws = wb[DFMEA_SHEET_NAME] if DFMEA_SHEET_NAME in wb.sheetnames else wb[wb.sheetnames[0]]
         lines = [f"Sheet: {ws.title}"]
         for row_idx in range(1, 13):
@@ -422,9 +427,9 @@ def fill_dfmea_template(
     call_deepseek: Optional[Callable[[str, int], str]] = None,
 ) -> BytesIO:
     if template_bytes:
-        wb = load_workbook(BytesIO(template_bytes))
+        wb = _load_workbook(BytesIO(template_bytes))
     else:
-        wb = load_workbook(resolve_template_path(template_filename, "AI-DQA"))
+        wb = _load_workbook(resolve_template_path(template_filename, "AI-DQA"))
     if not template_outline and template_bytes:
         template_outline = extract_template_outline(template_bytes, template_filename)
     return fill_dfmea_workbook(

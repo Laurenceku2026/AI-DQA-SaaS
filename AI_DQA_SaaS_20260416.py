@@ -15,6 +15,16 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
+from dfss_report_templates import (
+    build_template_guided_analysis_addon,
+    export_report_template,
+    extract_template_outline,
+    list_report_templates,
+    resolve_template_path,
+)
+from knowledge_base_utils import SupabaseKnowledgeDB, is_chinese
+from web_search_utils import web_search_dual as shared_web_search_dual
+
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
@@ -253,16 +263,6 @@ if "template_outline" not in st.session_state:
 
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
-
-from dfss_report_templates import (
-    build_template_guided_analysis_addon,
-    export_report_template,
-    extract_template_outline,
-    list_report_templates,
-    resolve_template_path,
-)
-from knowledge_base_utils import SupabaseKnowledgeDB, is_chinese
-from web_search_utils import web_search_dual as shared_web_search_dual
 
 
 def create_supabase_knowledge_db() -> SupabaseKnowledgeDB:
