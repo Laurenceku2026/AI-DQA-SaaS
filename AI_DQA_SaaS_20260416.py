@@ -246,6 +246,7 @@ if "upload_result" not in st.session_state:
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
 
+from dfss_report_templates import export_report_template, list_report_templates
 from knowledge_base_utils import SupabaseKnowledgeDB, is_chinese
 from web_search_utils import web_search_dual as shared_web_search_dual
 
@@ -1095,6 +1096,9 @@ TEXTS = {
         "db_status": "数据库状态",
         "db_connected": "✅ 混合模式 (SQLite + Neo4j + Supabase知识库)",
         "download_btn": "📥 下载 Word 报告",
+        "template_label": "报告模板",
+        "template_fill_btn": "📄 生成模板报告",
+        "template_hint": "固定客户模板使用规则自动填表，无需调用 DeepSeek。",
     },
     "en": {
         "title": "🔍 AI+DQA Product Design Risk Analysis",
@@ -1120,6 +1124,9 @@ TEXTS = {
         "db_status": "Database Status",
         "db_connected": "✅ Hybrid Mode (SQLite + Neo4j + Supabase Knowledge Base)",
         "download_btn": "📥 Download Word Report",
+        "template_label": "Report template",
+        "template_fill_btn": "📄 Generate template report",
+        "template_hint": "Fixed client templates are filled by rules; DeepSeek is not required.",
     }
 }
 
@@ -1212,24 +1219,66 @@ if st.session_state.report_content:
     st.markdown(full_report_display)
     st.markdown('</div>', unsafe_allow_html=True)
     
-    col_download = st.columns([1,2,1])[1]
-    with col_download:
-        if st.button(t["download_btn"], use_container_width=True):
-            word_bytes = generate_word_report(
+    col_word, col_template = st.columns(2)
+    templates = list_report_templates("AI-DQA")
+
+    with col_word:
+        st.download_button(
+            label=t["download_btn"],
+            data=generate_word_report(
                 st.session_state.last_product_name,
                 st.session_state.last_product_desc,
-                saved_name, saved_title,
+                saved_name,
+                saved_title,
                 st.session_state.report_content,
-                lang=st.session_state.lang
-            )
-            file_name = f"{st.session_state.last_product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx" if lang=="zh" else f"{st.session_state.last_product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
-            st.download_button(
-                label="📥 确认下载",
-                data=word_bytes,
-                file_name=file_name,
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                key="real_download"
-            )
+                lang=st.session_state.lang,
+            ),
+            file_name=(
+                f"{st.session_state.last_product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx"
+                if lang == "zh"
+                else f"{st.session_state.last_product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
+            ),
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+            key="download_word_report",
+        )
+
+    with col_template:
+        if templates:
+            selected_template = st.selectbox(t["template_label"], templates, key="dqa_template_select")
+            st.caption(t["template_hint"])
+            if st.button(t["template_fill_btn"], use_container_width=True, key="dqa_template_fill_btn"):
+                try:
+                    template_bytes, template_mime = export_report_template(
+                        template_filename=selected_template,
+                        product_name=st.session_state.last_product_name,
+                        product_desc=st.session_state.last_product_desc,
+                        report_content=st.session_state.report_content,
+                        analyst_name=saved_name,
+                        analyst_title=saved_title,
+                        lang=st.session_state.lang,
+                    )
+                    ext = os.path.splitext(selected_template)[1]
+                    st.session_state.dqa_template_download = {
+                        "data": template_bytes.getvalue(),
+                        "name": f"{st.session_state.last_product_name}_模板报告_{datetime.now().strftime('%Y%m%d')}{ext}",
+                        "mime": template_mime,
+                    }
+                except Exception as exc:
+                    st.error(f"模板导出失败: {exc}" if lang == "zh" else f"Template export failed: {exc}")
+
+            if st.session_state.get("dqa_template_download"):
+                payload = st.session_state.dqa_template_download
+                st.download_button(
+                    label="📥 确认下载模板报告" if lang == "zh" else "📥 Confirm template download",
+                    data=payload["data"],
+                    file_name=payload["name"],
+                    mime=payload["mime"],
+                    use_container_width=True,
+                    key="download_template_report",
+                )
+        else:
+            st.info("未找到报告模板，请将模板放入 templates/ 目录。" if lang == "zh" else "No report templates found in templates/.")
     if st.button("← 返回重新填写"):
         st.session_state.report_content = None
         st.session_state.last_product_name = ""
