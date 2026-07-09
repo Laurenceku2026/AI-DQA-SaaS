@@ -242,11 +242,25 @@ if "upload_success" not in st.session_state:
     st.session_state.upload_success = False
 if "upload_result" not in st.session_state:
     st.session_state.upload_result = None
+if "use_custom_template" not in st.session_state:
+    st.session_state.use_custom_template = False
+if "uploaded_template_name" not in st.session_state:
+    st.session_state.uploaded_template_name = ""
+if "uploaded_template_bytes" not in st.session_state:
+    st.session_state.uploaded_template_bytes = None
+if "template_outline" not in st.session_state:
+    st.session_state.template_outline = ""
 
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
 
-from dfss_report_templates import export_report_template, list_report_templates
+from dfss_report_templates import (
+    build_template_guided_analysis_addon,
+    export_report_template,
+    extract_template_outline,
+    list_report_templates,
+    resolve_template_path,
+)
 from knowledge_base_utils import SupabaseKnowledgeDB, is_chinese
 from web_search_utils import web_search_dual as shared_web_search_dual
 
@@ -819,7 +833,14 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
     return doc_bytes
 
 
-def generate_ai_analysis_content(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase, lang: str = "zh") -> str:
+def generate_ai_analysis_content(
+    product_name: str,
+    product_desc: str,
+    enable_web: bool,
+    db: RiskDatabase,
+    lang: str = "zh",
+    template_outline: str = "",
+) -> str:
     search_keywords = f"{product_name} {product_desc}"
     # Backward-compatible fallback for deployments where db impl may not expose search_knowledge_full yet.
     search_full = getattr(db, "search_knowledge_full", None)
@@ -837,6 +858,8 @@ def generate_ai_analysis_content(product_name: str, product_desc: str, enable_we
             query = f"{product_name} failure case" if lang == "en" else f"{product_name} 失效案例"
             web_context = web_search_dual(query, lang)
     
+    template_addon = build_template_guided_analysis_addon(template_outline, lang) if template_outline else ""
+
     if lang == "en":
         prompt = f"""
 You are a senior reliability engineer. Please conduct a risk analysis for the product based on the information below.
@@ -852,6 +875,7 @@ Design Description: {product_desc}
 
 === Web Search Results ===
 {web_context if web_context else "Not enabled"}
+{template_addon}
 
 IMPORTANT INSTRUCTIONS:
 - Output the risk analysis report directly, without any preamble (e.g., "Okay", "Based on the above information").
@@ -879,10 +903,11 @@ Note: Do not bold module names in the table, and avoid using ** symbols.
 
 === 联网搜索结果 ===
 {web_context if web_context else "未启用"}
+{template_addon}
 
 请直接输出风险分析报告，不要添加任何开场白（如"好的"、"基于以上信息"等）。报告必须包含：
 ### 1. 产品分解
-### 2. Top 5 潜在风险（表格：模块、失效模式、原因、严重度、发生度、探测度、RPN）
+### 2. Top 5 潜在风险（表格：{"模块、失效模式、原因、严重度、发生度、探测度、RPN、失效影响(FE)、功能要求、预防控制(PC)、探测控制(DC)、预防措施" if template_outline else "模块、失效模式、原因、严重度、发生度、探测度、RPN"}）
 ### 3. 关键风险缓解策略（针对RPN最高的3项）
 
 注意：表格中的模块名称不要加粗，不要出现 ** 符号。
@@ -1098,7 +1123,12 @@ TEXTS = {
         "download_btn": "📥 下载 Word 报告",
         "template_label": "报告模板",
         "template_fill_btn": "📄 生成模板报告",
-        "template_hint": "固定客户模板使用规则自动填表，无需调用 DeepSeek。",
+        "template_hint": "将先用 DeepSeek 理解模板步骤2-6所需字段，再自动填入 Excel/Word 模板。",
+        "use_custom_template": "使用本地客户模板驱动分析与导出",
+        "upload_template_label": "上传 Word / Excel 模板",
+        "template_uploaded": "已加载模板",
+        "template_source_builtin": "内置模板",
+        "template_source_uploaded": "本地上传模板",
     },
     "en": {
         "title": "🔍 AI+DQA Product Design Risk Analysis",
@@ -1126,7 +1156,12 @@ TEXTS = {
         "download_btn": "📥 Download Word Report",
         "template_label": "Report template",
         "template_fill_btn": "📄 Generate template report",
-        "template_hint": "Fixed client templates are filled by rules; DeepSeek is not required.",
+        "template_hint": "DeepSeek first understands template steps 2-6, then fills Excel/Word automatically.",
+        "use_custom_template": "Use local client template to guide analysis and export",
+        "upload_template_label": "Upload Word / Excel template",
+        "template_uploaded": "Template loaded",
+        "template_source_builtin": "Built-in template",
+        "template_source_uploaded": "Uploaded local template",
     }
 }
 
@@ -1176,6 +1211,29 @@ st.markdown(f"### {t['input_title']}")
 product_name = st.text_input(t["product_name"], placeholder=t["product_name_ph"], key="product_name_input")
 product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100, key="product_desc_input")
 
+st.session_state.use_custom_template = st.checkbox(
+    t["use_custom_template"],
+    value=st.session_state.use_custom_template,
+    key="use_custom_template_checkbox",
+)
+uploaded_template = None
+if st.session_state.use_custom_template:
+    uploaded_template = st.file_uploader(
+        t["upload_template_label"],
+        type=["xlsx", "xls", "docx"],
+        key="dqa_local_template_uploader",
+    )
+    if uploaded_template is not None:
+        st.session_state.uploaded_template_name = uploaded_template.name
+        st.session_state.uploaded_template_bytes = uploaded_template.getvalue()
+        st.session_state.template_outline = extract_template_outline(
+            st.session_state.uploaded_template_bytes,
+            uploaded_template.name,
+        )
+        st.success(f"{t['template_uploaded']}: {uploaded_template.name}")
+    elif st.session_state.uploaded_template_bytes:
+        st.caption(f"{t['template_uploaded']}: {st.session_state.uploaded_template_name}")
+
 col_center = st.columns([1, 2, 1])[1]
 with col_center:
     st.markdown('<div class="main-analyze">', unsafe_allow_html=True)
@@ -1190,11 +1248,18 @@ with col_center:
             else:
                 db = st.session_state.database
                 with st.spinner(t["generating"]):
+                    template_outline = ""
+                    if st.session_state.use_custom_template and st.session_state.uploaded_template_bytes:
+                        template_outline = st.session_state.template_outline or extract_template_outline(
+                            st.session_state.uploaded_template_bytes,
+                            st.session_state.uploaded_template_name,
+                        )
                     report_content = generate_ai_analysis_content(
                         product_name, product_desc,
                         st.session_state.enable_web_search,
                         db,
-                        lang=st.session_state.lang
+                        lang=st.session_state.lang,
+                        template_outline=template_outline,
                     )
                     st.session_state.report_content = report_content
                     st.session_state.last_product_name = product_name
@@ -1244,19 +1309,47 @@ if st.session_state.report_content:
         )
 
     with col_template:
-        if templates:
-            selected_template = st.selectbox(t["template_label"], templates, key="dqa_template_select")
+        template_options = []
+        if st.session_state.uploaded_template_bytes and st.session_state.uploaded_template_name:
+            template_options.append(st.session_state.uploaded_template_name)
+        for name in templates:
+            if name not in template_options:
+                template_options.append(name)
+
+        if template_options:
+            selected_template = st.selectbox(t["template_label"], template_options, key="dqa_template_select")
+            using_uploaded = (
+                st.session_state.uploaded_template_bytes is not None
+                and selected_template == st.session_state.uploaded_template_name
+            )
+            st.caption(
+                t["template_source_uploaded"] if using_uploaded else t["template_source_builtin"]
+            )
             st.caption(t["template_hint"])
             if st.button(t["template_fill_btn"], use_container_width=True, key="dqa_template_fill_btn"):
                 try:
+                    template_bytes = (
+                        st.session_state.uploaded_template_bytes if using_uploaded else None
+                    )
+                    template_outline = ""
+                    if template_bytes:
+                        template_outline = st.session_state.template_outline or extract_template_outline(
+                            template_bytes, selected_template
+                        )
+                    elif selected_template:
+                        with open(resolve_template_path(selected_template, "AI-DQA"), "rb") as f:
+                            template_outline = extract_template_outline(f.read(), selected_template)
                     template_bytes, template_mime = export_report_template(
                         template_filename=selected_template,
+                        template_bytes=template_bytes,
                         product_name=st.session_state.last_product_name,
                         product_desc=st.session_state.last_product_desc,
                         report_content=st.session_state.report_content,
                         analyst_name=saved_name,
                         analyst_title=saved_title,
                         lang=st.session_state.lang,
+                        template_outline=template_outline,
+                        call_deepseek=call_deepseek,
                     )
                     ext = os.path.splitext(selected_template)[1]
                     st.session_state.dqa_template_download = {
