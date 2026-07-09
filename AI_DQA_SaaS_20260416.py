@@ -820,7 +820,12 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
 
 def generate_ai_analysis_content(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase, lang: str = "zh") -> str:
     search_keywords = f"{product_name} {product_desc}"
-    kb_items = db.search_knowledge_full(search_keywords, limit=10)
+    # Backward-compatible fallback for deployments where db impl may not expose search_knowledge_full yet.
+    search_full = getattr(db, "search_knowledge_full", None)
+    if callable(search_full):
+        kb_items = search_full(search_keywords, limit=10)
+    else:
+        kb_items = db.search_knowledge(search_keywords, limit=10)
     kb_text = "\n".join(kb_items) if kb_items else ("No relevant knowledge found." if lang == "en" else "暂无相关经验知识")
     risks = db.get_risks(product_name)
     internal_text = "\n".join([f"- {r['module']}: {r['failure_mode']} (Cause: {r['cause']})" for r in risks[:5]])
