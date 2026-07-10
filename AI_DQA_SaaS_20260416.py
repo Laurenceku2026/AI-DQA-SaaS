@@ -15,9 +15,9 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
+from template_outline_utils import extract_template_outline
 from dqa_report_templates import (
     export_report_template,
-    extract_template_outline,
     list_report_templates,
     resolve_template_path,
 )
@@ -1252,13 +1252,26 @@ if st.session_state.use_custom_template:
         key="dqa_local_template_uploader",
     )
     if uploaded_template is not None:
-        st.session_state.uploaded_template_name = uploaded_template.name
-        st.session_state.uploaded_template_bytes = uploaded_template.getvalue()
-        st.session_state.template_outline = extract_template_outline(
-            st.session_state.uploaded_template_bytes,
-            uploaded_template.name,
-        )
-        st.success(f"{t['template_uploaded']}: {uploaded_template.name}")
+        upload_name = uploaded_template.name or "template.xlsx"
+        upload_bytes = uploaded_template.getvalue() or b""
+        upload_key = (upload_name, len(upload_bytes))
+        if st.session_state.get("_template_upload_key") != upload_key:
+            st.session_state._template_upload_key = upload_key
+            st.session_state.uploaded_template_name = upload_name
+            st.session_state.uploaded_template_bytes = upload_bytes
+            try:
+                st.session_state.template_outline = extract_template_outline(
+                    upload_bytes,
+                    upload_name,
+                )
+            except Exception as exc:
+                st.session_state.template_outline = f"Template file: {upload_name}"
+                st.warning(
+                    f"模板结构解析失败，将使用基础模式继续：{exc}"
+                    if lang == "zh"
+                    else f"Template outline parsing failed; continuing with basic mode: {exc}"
+                )
+        st.success(f"{t['template_uploaded']}: {upload_name}")
     elif st.session_state.uploaded_template_bytes:
         st.caption(f"{t['template_uploaded']}: {st.session_state.uploaded_template_name}")
 

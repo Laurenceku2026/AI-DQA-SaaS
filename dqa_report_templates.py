@@ -126,8 +126,12 @@ def _clean_cell_text(text: str) -> str:
     return re.sub(r"\*\*", "", text or "").strip()
 
 
-def _parse_json_from_llm(text: str) -> Any:
-    if not text:
+def _parse_json_from_llm(text: Any) -> Any:
+    if text is None:
+        return None
+    if not isinstance(text, str):
+        text = str(text)
+    if not text.strip():
         return None
     cleaned = text.strip()
     if cleaned.startswith("```"):
@@ -145,43 +149,10 @@ def _parse_json_from_llm(text: str) -> Any:
 
 
 def extract_template_outline(template_bytes: bytes, filename: str) -> str:
-    """Extract template headers / placeholders for DeepSeek planning."""
-    try:
-        ext = os.path.splitext(filename)[1].lower()
-        if ext == ".xls":
-            return _extract_xls_outline(template_bytes, filename)
-        if ext in (".xlsx",):
-            wb = _load_workbook(BytesIO(template_bytes), data_only=True)
-            ws = wb[DFMEA_SHEET_NAME] if DFMEA_SHEET_NAME in wb.sheetnames else wb[wb.sheetnames[0]]
-            lines = [f"Sheet: {ws.title}"]
-            for row_idx in range(1, 13):
-                values = []
-                for col_idx in range(1, 30):
-                    value = ws.cell(row=row_idx, column=col_idx).value
-                    if value is not None and str(value).strip():
-                        values.append(f"C{col_idx}:{str(value).strip()}")
-                if values:
-                    lines.append(f"R{row_idx} " + " | ".join(values))
-            return "\n".join(lines)
+    """Backward-compatible wrapper."""
+    from template_outline_utils import extract_template_outline as _extract
 
-        if ext == ".docx" and Document is not None:
-            doc = Document(BytesIO(template_bytes))
-            lines = ["Word template paragraphs:"]
-            for idx, para in enumerate(doc.paragraphs[:80], start=1):
-                text = para.text.strip()
-                if text:
-                    lines.append(f"P{idx}: {text}")
-            for t_idx, table in enumerate(doc.tables[:5], start=1):
-                lines.append(f"Table{t_idx}:")
-                for r_idx, row in enumerate(table.rows[:8]):
-                    cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-                    if cells:
-                        lines.append(f"  R{r_idx + 1}: " + " | ".join(cells))
-            return "\n".join(lines)
-
-        return f"Template file: {filename}"
-    except Exception:
-        return f"Template file: {filename}"
+    return _extract(template_bytes, filename)
 
 
 def build_template_guided_analysis_addon(template_outline: str, lang: str) -> str:
