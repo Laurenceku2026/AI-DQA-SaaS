@@ -47,6 +47,48 @@ TEMPLATE_EXTENSIONS = (".xlsx", ".xls", ".docx")
 DFMEA_SHEET_NAME = "DFMEA标准表格"
 DFMEA_DATA_START_ROW = 12
 
+# 固定模板配置：模板1=规则填表省Token，模板2=AI完整填表
+TEMPLATE_PROFILES: Dict[str, Dict[str, Any]] = {
+    "template1": {
+        "filename": "DFMEA模板1.xlsx",
+        "fallback_filename": "新版FMEA表格.xlsx",
+        "use_deepseek_fill": False,
+        "use_deepseek_analysis": False,
+        "label_zh": "模板1（旧版·规则填表，省Token）",
+        "label_en": "Template 1 (legacy rule-based, saves tokens)",
+    },
+    "template2": {
+        "filename": "新版FMEA表格.xlsx",
+        "fallback_filename": "新版FMEA表格.xlsx",
+        "use_deepseek_fill": True,
+        "use_deepseek_analysis": True,
+        "label_zh": "模板2（新版·AI完整填表）",
+        "label_en": "Template 2 (new AI-enhanced fill)",
+    },
+}
+
+DFMEA_FIELD_ALIASES: Dict[str, List[str]] = {
+    "higher_level": ["higher_level", "上一级", "上一层级"],
+    "focus_element": ["focus_element", "关注要素", "模块", "module"],
+    "lower_level": ["lower_level", "下一层级", "下一低层级"],
+    "higher_function": ["higher_function", "上一级功能"],
+    "focus_function": ["focus_function", "关注要素功能"],
+    "lower_function": ["lower_function", "下一级功能"],
+    "failure_effect": ["failure_effect", "失效影响", "fe", "FE"],
+    "severity": ["severity", "严重度", "s", "S"],
+    "failure_mode": ["failure_mode", "失效模式", "fm", "FM", "关注要素的失效模式"],
+    "failure_cause": ["failure_cause", "失效原因", "原因", "fc", "FC"],
+    "prevention_control": ["prevention_control", "预防控制", "pc", "PC"],
+    "occurrence": ["occurrence", "发生度", "o", "O"],
+    "detection_control": ["detection_control", "探测控制", "dc", "DC"],
+    "detection": ["detection", "探测度", "d", "D"],
+    "action_priority": ["action_priority", "ap", "AP"],
+    "prevention_action": ["prevention_action", "预防措施"],
+    "detection_action": ["detection_action", "探测措施"],
+    "responsible": ["responsible", "责任人", "负责人"],
+    "target_date": ["target_date", "目标完成日期", "完成日期"],
+}
+
 DFMEA_HEADER_CELLS = {
     "project_name": (3, 17),
     "start_date": (4, 17),
@@ -122,8 +164,131 @@ def resolve_template_path(filename: str, app_key: str = "AI-DQA") -> str:
     raise FileNotFoundError(f"Template not found: {filename}")
 
 
+def resolve_profile_template_filename(mode: str) -> Optional[str]:
+    profile = TEMPLATE_PROFILES.get(mode)
+    if not profile:
+        return None
+    primary = profile.get("filename")
+    fallback = profile.get("fallback_filename")
+    for name in (primary, fallback):
+        if not name:
+            continue
+        try:
+            resolve_template_path(name, "AI-DQA")
+            return name
+        except FileNotFoundError:
+            continue
+    return primary
+
+
+def profile_uses_deepseek_fill(mode: str) -> bool:
+    profile = TEMPLATE_PROFILES.get(mode, {})
+    return bool(profile.get("use_deepseek_fill"))
+
+
+def profile_uses_deepseek_analysis(mode: str) -> bool:
+    profile = TEMPLATE_PROFILES.get(mode, {})
+    return bool(profile.get("use_deepseek_analysis"))
+
+
+def get_template_profile_label(mode: str, lang: str = "zh") -> str:
+    profile = TEMPLATE_PROFILES.get(mode, {})
+    key = "label_zh" if lang == "zh" else "label_en"
+    return profile.get(key, mode)
+
+
 def _clean_cell_text(text: str) -> str:
     return re.sub(r"\*\*", "", text or "").strip()
+
+
+def _pick_field(row: Dict[str, Any], canonical: str) -> str:
+    if not isinstance(row, dict):
+        return ""
+    aliases = DFMEA_FIELD_ALIASES.get(canonical, [canonical])
+    for key in aliases:
+        if key in row and row[key] is not None and str(row[key]).strip():
+            return str(row[key]).strip()
+    lowered = {str(k).lower(): v for k, v in row.items()}
+    for key in aliases:
+        val = lowered.get(str(key).lower())
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return ""
+
+
+def _normalize_dfmea_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(row, dict):
+        return {}
+    normalized = {field: _pick_field(row, field) for field in DFMEA_ROW_COLUMNS}
+    if not normalized.get("failure_mode"):
+        normalized["failure_mode"] = (
+            _pick_field(row, "failure_mode")
+            or normalized.get("focus_function", "")
+            or normalized.get("focus_element", "")
+        )
+    if not normalized.get("failure_effect"):
+        normalized["failure_effect"] = normalized.get("failure_mode", "")
+    if not normalized.get("failure_cause") and normalized.get("lower_function"):
+        pass
+    return normalized
+
+
+def _extract_risk_table_section(report_content: str) -> str:
+    """Keep only the risk table section to reduce DeepSeek prompt size."""
+    lines = report_content.splitlines()
+    captured: List[str] = []
+    started = False
+    for line in lines:
+        stripped = line.strip()
+        if "|" in stripped and any(
+            token in stripped.lower()
+            for token in ["模块", "失效", "module", "failure", "严重", "severity", "rpn"]
+        ):
+            started = True
+        if started:
+            if stripped.startswith("|") or not stripped:
+                captured.append(line)
+            elif captured:
+                break
+    if captured:
+        return "\n".join(captured)
+    return report_content[:3500]
+
+
+def _merge_rows_with_report(
+    rows: List[Dict[str, Any]],
+    product_name: str,
+    product_desc: str,
+    report_content: str,
+    lang: str,
+) -> List[Dict[str, Any]]:
+    risks = parse_risks_from_markdown(report_content)
+    fallback_rows = _simple_rows_from_report(product_name, product_desc, report_content, lang)
+    merged: List[Dict[str, Any]] = []
+    source_rows = rows or fallback_rows
+    for idx, row in enumerate(source_rows[:5]):
+        normalized = _normalize_dfmea_row(row if isinstance(row, dict) else {})
+        if risks and idx < len(risks):
+            risk = risks[idx]
+            if not normalized.get("failure_mode"):
+                normalized["failure_mode"] = risk.get("failure_mode", "")
+            if not normalized.get("failure_cause"):
+                normalized["failure_cause"] = risk.get("cause", "")
+            if not normalized.get("severity"):
+                normalized["severity"] = risk.get("severity", "")
+            if not normalized.get("occurrence"):
+                normalized["occurrence"] = risk.get("occurrence", "")
+            if not normalized.get("detection"):
+                normalized["detection"] = risk.get("detection", "")
+            if not normalized.get("focus_element"):
+                normalized["focus_element"] = risk.get("module", "")
+        if idx < len(fallback_rows):
+            fb = fallback_rows[idx]
+            for field in ("failure_mode", "failure_effect", "failure_cause", "focus_element"):
+                if not normalized.get(field) and fb.get(field):
+                    normalized[field] = fb[field]
+        merged.append(normalized)
+    return merged or fallback_rows
 
 
 def _parse_json_from_llm(text: Any) -> Any:
@@ -192,35 +357,30 @@ def generate_dfmea_rows_with_deepseek(
     call_deepseek: Callable[[str, int], str],
 ) -> List[Dict[str, Any]]:
     """Use DeepSeek to map web report content into complete DFMEA rows."""
+    risk_section = _extract_risk_table_section(report_content)
     prompt = f"""
-你是资深可靠性工程师。请根据网页分析报告，生成 DFMEA 表格最多 5 行完整数据。
+你是资深可靠性工程师。根据以下风险分析表，生成 DFMEA 最多 5 行 JSON 数据。
 
-产品名称：{product_name}
-设计描述：{product_desc}
+产品：{product_name}
+设计：{product_desc[:200]}
 
-模板结构：
-{template_outline}
+风险表：
+{risk_section}
 
-网页分析报告：
-{report_content}
-
-请只输出 JSON 数组，不要其他文字。每个元素包含：
-higher_level, focus_element, lower_level,
-higher_function, focus_function, lower_function,
-failure_effect, severity, failure_mode, failure_cause,
-prevention_control, occurrence, detection_control, detection,
+每个 JSON 对象必须包含且不可留空：
+failure_mode（关注要素失效模式FM）, failure_effect（失效影响FE）, failure_cause（失效原因FC）,
+focus_element, higher_level, lower_level, higher_function, focus_function, lower_function,
+severity, occurrence, detection, prevention_control, detection_control,
 prevention_action, detection_action, responsible, target_date
 
-要求：
-1. 步骤2-6 字段尽量完整，不要留空
-2. severity/occurrence/detection 用 1-10 整数
-3. target_date 格式 YYYY-MM-DD
-4. 内容使用{'中文' if lang == 'zh' else 'English'}
+注意：failure_mode 与 failure_effect 必须分别填写，failure_mode 写失效模式，failure_effect 写后果。
+severity/occurrence/detection 用 1-10 整数。target_date 格式 YYYY-MM-DD。
+语言：{'中文' if lang == 'zh' else 'English'}。只输出 JSON 数组。
 """
-    raw = call_deepseek(prompt, 5000)
+    raw = call_deepseek(prompt, 2800)
     parsed = _parse_json_from_llm(raw)
     if isinstance(parsed, list):
-        return parsed[:5]
+        return _merge_rows_with_report(parsed, product_name, product_desc, report_content, lang)
     return []
 
 
@@ -397,14 +557,14 @@ def fill_dfmea_workbook(
     for key, (row, col) in DFMEA_HEADER_CELLS.items():
         _set_cell(ws, row, col, header_values.get(key))
 
-    if call_deepseek and template_outline:
+    if call_deepseek:
         rows = generate_dfmea_rows_with_deepseek(
             template_outline, product_name, product_desc, report_content, lang, call_deepseek
         )
         if not rows:
-            rows = _simple_rows_from_report(product_name, product_desc, report_content, lang)
+            rows = _merge_rows_with_report([], product_name, product_desc, report_content, lang)
     else:
-        rows = _simple_rows_from_report(product_name, product_desc, report_content, lang)
+        rows = _merge_rows_with_report([], product_name, product_desc, report_content, lang)
 
     _fill_dfmea_rows(ws, rows)
     out = BytesIO()

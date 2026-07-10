@@ -18,8 +18,13 @@ from docx.oxml.ns import qn
 from template_outline_utils import extract_template_outline
 from dqa_report_templates import (
     export_report_template,
+    get_template_profile_label,
     list_report_templates,
+    profile_uses_deepseek_analysis,
+    profile_uses_deepseek_fill,
+    resolve_profile_template_filename,
     resolve_template_path,
+    TEMPLATE_PROFILES,
 )
 from knowledge_base_utils import SupabaseKnowledgeDB, is_chinese
 from web_search_utils import web_search_dual as shared_web_search_dual
@@ -282,6 +287,8 @@ if "upload_result" not in st.session_state:
     st.session_state.upload_result = None
 if "use_custom_template" not in st.session_state:
     st.session_state.use_custom_template = False
+if "template_mode" not in st.session_state:
+    st.session_state.template_mode = "custom" if st.session_state.use_custom_template else "none"
 if "uploaded_template_name" not in st.session_state:
     st.session_state.uploaded_template_name = ""
 if "uploaded_template_bytes" not in st.session_state:
@@ -1151,7 +1158,10 @@ TEXTS = {
         "download_btn": "📥 下载 Word 报告",
         "template_label": "报告模板",
         "template_fill_btn": "📄 生成模板报告",
-        "template_hint": "将先用 DeepSeek 理解模板步骤2-6所需字段，再自动填入 Excel/Word 模板。",
+        "template_hint": "模板2 使用 AI 完整填表；模板1 仅用规则填表，更省 Token。",
+        "template_mode_label": "客户 DFMEA 模板",
+        "template_mode_none": "不启用客户模板",
+        "template_mode_custom": "上传自定义模板",
         "use_custom_template": "使用本地客户模板驱动分析与导出",
         "upload_template_label": "上传 Word / Excel 模板",
         "template_uploaded": "已加载模板",
@@ -1184,7 +1194,10 @@ TEXTS = {
         "download_btn": "📥 Download Word Report",
         "template_label": "Report template",
         "template_fill_btn": "📄 Generate template report",
-        "template_hint": "DeepSeek first understands template steps 2-6, then fills Excel/Word automatically.",
+        "template_hint": "Template 2 uses AI fill; Template 1 uses rules only and saves tokens.",
+        "template_mode_label": "Client DFMEA template",
+        "template_mode_none": "No client template",
+        "template_mode_custom": "Upload custom template",
         "use_custom_template": "Use local client template to guide analysis and export",
         "upload_template_label": "Upload Word / Excel template",
         "template_uploaded": "Template loaded",
@@ -1239,13 +1252,25 @@ st.markdown(f"### {t['input_title']}")
 product_name = st.text_input(t["product_name"], placeholder=t["product_name_ph"], key="product_name_input")
 product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100, key="product_desc_input")
 
-st.session_state.use_custom_template = st.checkbox(
-    t["use_custom_template"],
-    value=st.session_state.use_custom_template,
-    key="use_custom_template_checkbox",
+st.session_state.template_mode = st.selectbox(
+    t["template_mode_label"],
+    options=["none", "template1", "template2", "custom"],
+    format_func=lambda mode: {
+        "none": t["template_mode_none"],
+        "template1": get_template_profile_label("template1", lang),
+        "template2": get_template_profile_label("template2", lang),
+        "custom": t["template_mode_custom"],
+    }.get(mode, mode),
+    index=["none", "template1", "template2", "custom"].index(
+        st.session_state.template_mode if st.session_state.template_mode in {"none", "template1", "template2", "custom"} else "none"
+    ),
+    key="dqa_template_mode_select",
 )
+st.session_state.use_custom_template = st.session_state.template_mode == "custom"
+st.caption(t["template_hint"])
+
 uploaded_template = None
-if st.session_state.use_custom_template:
+if st.session_state.template_mode == "custom":
     uploaded_template = st.file_uploader(
         t["upload_template_label"],
         type=["xlsx", "xls", "docx"],
@@ -1290,11 +1315,17 @@ with col_center:
                 db = st.session_state.database
                 with st.spinner(t["generating"]):
                     template_outline = ""
-                    if st.session_state.use_custom_template and st.session_state.uploaded_template_bytes:
+                    mode = st.session_state.template_mode
+                    if mode == "custom" and st.session_state.uploaded_template_bytes:
                         template_outline = st.session_state.template_outline or extract_template_outline(
                             st.session_state.uploaded_template_bytes,
                             st.session_state.uploaded_template_name,
                         )
+                    elif mode == "template2":
+                        tpl_name = resolve_profile_template_filename("template2")
+                        if tpl_name:
+                            with open(resolve_template_path(tpl_name, "AI-DQA"), "rb") as f:
+                                template_outline = extract_template_outline(f.read(), tpl_name)
                     report_content = generate_ai_analysis_content(
                         product_name, product_desc,
                         st.session_state.enable_web_search,
@@ -1351,35 +1382,56 @@ if st.session_state.report_content:
 
     with col_template:
         template_options = []
-        if st.session_state.uploaded_template_bytes and st.session_state.uploaded_template_name:
+        mode = st.session_state.template_mode
+        if mode == "template1":
+            tpl1 = resolve_profile_template_filename("template1")
+            if tpl1:
+                template_options.append(tpl1)
+        elif mode == "template2":
+            tpl2 = resolve_profile_template_filename("template2")
+            if tpl2:
+                template_options.append(tpl2)
+        elif mode == "custom" and st.session_state.uploaded_template_bytes and st.session_state.uploaded_template_name:
             template_options.append(st.session_state.uploaded_template_name)
-        for name in templates:
-            if name not in template_options:
-                template_options.append(name)
+        else:
+            for name in templates:
+                if name not in template_options:
+                    template_options.append(name)
 
         if template_options:
-            selected_template = st.selectbox(t["template_label"], template_options, key="dqa_template_select")
+            selected_template = template_options[0] if len(template_options) == 1 else st.selectbox(
+                t["template_label"], template_options, key="dqa_template_select"
+            )
             using_uploaded = (
-                st.session_state.uploaded_template_bytes is not None
+                mode == "custom"
+                and st.session_state.uploaded_template_bytes is not None
                 and selected_template == st.session_state.uploaded_template_name
+            )
+            use_deepseek_fill = (
+                (mode == "template2" and profile_uses_deepseek_fill("template2"))
+                or (mode == "custom" and st.session_state.uploaded_template_bytes is not None)
             )
             st.caption(
                 t["template_source_uploaded"] if using_uploaded else t["template_source_builtin"]
             )
-            st.caption(t["template_hint"])
+            if mode == "template1":
+                st.caption("规则填表模式（不调用 DeepSeek）" if lang == "zh" else "Rule-based fill (no DeepSeek)")
+            elif use_deepseek_fill:
+                st.caption("AI 填表模式（消耗 DeepSeek Token）" if lang == "zh" else "AI fill mode (uses DeepSeek tokens)")
             if st.button(t["template_fill_btn"], use_container_width=True, key="dqa_template_fill_btn"):
                 try:
                     template_bytes = (
                         st.session_state.uploaded_template_bytes if using_uploaded else None
                     )
                     template_outline = ""
-                    if template_bytes:
-                        template_outline = st.session_state.template_outline or extract_template_outline(
-                            template_bytes, selected_template
-                        )
-                    elif selected_template:
-                        with open(resolve_template_path(selected_template, "AI-DQA"), "rb") as f:
-                            template_outline = extract_template_outline(f.read(), selected_template)
+                    if use_deepseek_fill:
+                        if template_bytes:
+                            template_outline = st.session_state.template_outline or extract_template_outline(
+                                template_bytes, selected_template
+                            )
+                        elif selected_template:
+                            with open(resolve_template_path(selected_template, "AI-DQA"), "rb") as f:
+                                template_outline = extract_template_outline(f.read(), selected_template)
                     template_bytes, template_mime = export_report_template(
                         template_filename=selected_template,
                         template_bytes=template_bytes,
@@ -1390,7 +1442,7 @@ if st.session_state.report_content:
                         analyst_title=saved_title,
                         lang=st.session_state.lang,
                         template_outline=template_outline,
-                        call_deepseek=call_deepseek,
+                        call_deepseek=call_deepseek if use_deepseek_fill else None,
                     )
                     ext = os.path.splitext(selected_template)[1]
                     st.session_state.dqa_template_download = {
