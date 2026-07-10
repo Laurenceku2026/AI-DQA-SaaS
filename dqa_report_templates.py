@@ -174,6 +174,9 @@ def template_mime_type(filename: str) -> str:
 
 
 def resolve_template_path(filename: str, app_key: str = "AI-DQA") -> str:
+    from dqa_template_profiles import normalize_template_filename
+
+    filename = normalize_template_filename(filename)
     here = os.path.dirname(os.path.abspath(__file__))
     candidates = [
         os.path.join(here, "templates", filename),
@@ -183,6 +186,21 @@ def resolve_template_path(filename: str, app_key: str = "AI-DQA") -> str:
     for path in candidates:
         if path and os.path.isfile(path):
             return path
+
+    # Fallback: fuzzy match in templates/ (handles encoding / legacy names on Cloud)
+    templates_dir = os.path.join(here, "templates")
+    if os.path.isdir(templates_dir):
+        markers = []
+        if "旧版" in filename or "模板1" in filename:
+            markers = ["旧版", "模板1"]
+        elif "新版" in filename or "模板2" in filename:
+            markers = ["新版", "模板2"]
+        for name in os.listdir(templates_dir):
+            if not name.endswith((".xlsx", ".xls")):
+                continue
+            if markers and any(m in name for m in markers):
+                return os.path.join(templates_dir, name)
+
     raise FileNotFoundError(f"Template not found: {filename}")
 
 

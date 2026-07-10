@@ -290,7 +290,7 @@ if "upload_result" not in st.session_state:
 if "use_custom_template" not in st.session_state:
     st.session_state.use_custom_template = False
 if "template_mode" not in st.session_state:
-    st.session_state.template_mode = "template1"
+    st.session_state.template_mode = "none"
 if "uploaded_template_name" not in st.session_state:
     st.session_state.uploaded_template_name = ""
 if "uploaded_template_bytes" not in st.session_state:
@@ -1160,7 +1160,7 @@ TEXTS = {
         "download_btn": "📥 下载 Word 报告",
         "template_label": "报告模板",
         "template_fill_btn": "📄 生成模板报告",
-        "template_hint": "模板2 使用 AI 完整填表；模板1 仅用规则填表，更省 Token。",
+        "template_hint": "模板2 使用 AI 完整填表；模板1 仅用规则填表。",
         "template_mode_label": "客户 DFMEA 模板",
         "template_mode_none": "不启用客户模板",
         "template_mode_custom": "上传自定义模板",
@@ -1196,7 +1196,7 @@ TEXTS = {
         "download_btn": "📥 Download Word Report",
         "template_label": "Report template",
         "template_fill_btn": "📄 Generate template report",
-        "template_hint": "Template 2 uses AI fill; Template 1 uses rules only and saves tokens.",
+        "template_hint": "Template 2 uses AI fill; Template 1 uses rules only.",
         "template_mode_label": "Client DFMEA template",
         "template_mode_none": "No client template",
         "template_mode_custom": "Upload custom template",
@@ -1264,7 +1264,7 @@ st.session_state.template_mode = st.selectbox(
         "custom": t["template_mode_custom"],
     }.get(mode, mode),
     index=["none", "template1", "template2", "custom"].index(
-        st.session_state.template_mode if st.session_state.template_mode in {"none", "template1", "template2", "custom"} else "template1"
+        st.session_state.template_mode if st.session_state.template_mode in {"none", "template1", "template2", "custom"} else "none"
     ),
     key="dqa_template_mode_select",
 )
@@ -1417,9 +1417,9 @@ if st.session_state.report_content:
                 t["template_source_uploaded"] if using_uploaded else t["template_source_builtin"]
             )
             if mode == "template1":
-                st.caption("规则填表模式（不调用 DeepSeek）" if lang == "zh" else "Rule-based fill (no DeepSeek)")
+                st.caption("规则填表模式" if lang == "zh" else "Rule-based fill")
             elif use_deepseek_fill:
-                st.caption("AI 填表模式（消耗 DeepSeek Token）" if lang == "zh" else "AI fill mode (uses DeepSeek tokens)")
+                st.caption("AI 填表模式" if lang == "zh" else "AI fill mode")
             if st.button(t["template_fill_btn"], use_container_width=True, key="dqa_template_fill_btn"):
                 try:
                     template_bytes = (

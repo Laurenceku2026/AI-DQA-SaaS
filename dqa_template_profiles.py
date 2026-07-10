@@ -21,8 +21,19 @@ TEMPLATE_PROFILES: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# 兼容旧部署/旧配置中的模板文件名
+TEMPLATE_FILENAME_ALIASES = {
+    "DFMEA模板1.xlsx": "模板1-DFMEA旧版.xlsx",
+    "新版FMEA表格.xlsx": "模板2-DFMEA新版.xlsx",
+}
+
+
+def normalize_template_filename(filename: str) -> str:
+    return TEMPLATE_FILENAME_ALIASES.get(filename, filename)
+
 
 def _resolve_template_path(filename: str, app_key: str = "AI-DQA") -> str:
+    filename = normalize_template_filename(filename)
     here = os.path.dirname(os.path.abspath(__file__))
     candidates = [
         os.path.join(here, "templates", filename),
@@ -39,7 +50,7 @@ def resolve_profile_template_filename(mode: str) -> Optional[str]:
     profile = TEMPLATE_PROFILES.get(mode)
     if not profile:
         return None
-    name = profile.get("filename")
+    name = normalize_template_filename(profile.get("filename") or "")
     if not name:
         return None
     try:
