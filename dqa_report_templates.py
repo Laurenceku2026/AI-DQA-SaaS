@@ -47,25 +47,13 @@ TEMPLATE_EXTENSIONS = (".xlsx", ".xls", ".docx")
 DFMEA_SHEET_NAME = "DFMEA标准表格"
 DFMEA_DATA_START_ROW = 12
 
-# 固定模板配置：模板1=规则填表省Token，模板2=AI完整填表
-TEMPLATE_PROFILES: Dict[str, Dict[str, Any]] = {
-    "template1": {
-        "filename": "DFMEA模板1.xlsx",
-        "fallback_filename": "新版FMEA表格.xlsx",
-        "use_deepseek_fill": False,
-        "use_deepseek_analysis": False,
-        "label_zh": "模板1（旧版·规则填表，省Token）",
-        "label_en": "Template 1 (legacy rule-based, saves tokens)",
-    },
-    "template2": {
-        "filename": "新版FMEA表格.xlsx",
-        "fallback_filename": "新版FMEA表格.xlsx",
-        "use_deepseek_fill": True,
-        "use_deepseek_analysis": True,
-        "label_zh": "模板2（新版·AI完整填表）",
-        "label_en": "Template 2 (new AI-enhanced fill)",
-    },
-}
+from dqa_template_profiles import (  # noqa: E402
+    TEMPLATE_PROFILES,
+    get_template_profile_label,
+    profile_uses_deepseek_analysis,
+    profile_uses_deepseek_fill,
+    resolve_profile_template_filename,
+)
 
 DFMEA_FIELD_ALIASES: Dict[str, List[str]] = {
     "higher_level": ["higher_level", "上一级", "上一层级"],
@@ -162,39 +150,6 @@ def resolve_template_path(filename: str, app_key: str = "AI-DQA") -> str:
         if path and os.path.isfile(path):
             return path
     raise FileNotFoundError(f"Template not found: {filename}")
-
-
-def resolve_profile_template_filename(mode: str) -> Optional[str]:
-    profile = TEMPLATE_PROFILES.get(mode)
-    if not profile:
-        return None
-    primary = profile.get("filename")
-    fallback = profile.get("fallback_filename")
-    for name in (primary, fallback):
-        if not name:
-            continue
-        try:
-            resolve_template_path(name, "AI-DQA")
-            return name
-        except FileNotFoundError:
-            continue
-    return primary
-
-
-def profile_uses_deepseek_fill(mode: str) -> bool:
-    profile = TEMPLATE_PROFILES.get(mode, {})
-    return bool(profile.get("use_deepseek_fill"))
-
-
-def profile_uses_deepseek_analysis(mode: str) -> bool:
-    profile = TEMPLATE_PROFILES.get(mode, {})
-    return bool(profile.get("use_deepseek_analysis"))
-
-
-def get_template_profile_label(mode: str, lang: str = "zh") -> str:
-    profile = TEMPLATE_PROFILES.get(mode, {})
-    key = "label_zh" if lang == "zh" else "label_en"
-    return profile.get(key, mode)
 
 
 def _clean_cell_text(text: str) -> str:

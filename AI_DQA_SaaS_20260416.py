@@ -16,15 +16,17 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
 from template_outline_utils import extract_template_outline
-from dqa_report_templates import (
-    export_report_template,
+from dqa_template_profiles import (
     get_template_profile_label,
-    list_report_templates,
     profile_uses_deepseek_analysis,
     profile_uses_deepseek_fill,
     resolve_profile_template_filename,
-    resolve_template_path,
     TEMPLATE_PROFILES,
+)
+from dqa_report_templates import (
+    export_report_template,
+    list_report_templates,
+    resolve_template_path,
 )
 from knowledge_base_utils import SupabaseKnowledgeDB, is_chinese
 from web_search_utils import web_search_dual as shared_web_search_dual
