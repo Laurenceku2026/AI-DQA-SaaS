@@ -6,16 +6,14 @@ from typing import Any, Dict, Optional
 
 TEMPLATE_PROFILES: Dict[str, Dict[str, Any]] = {
     "template1": {
-        "filename": "DFMEA模板1.xlsx",
-        "fallback_filename": "新版FMEA表格.xlsx",
+        "filename": "模板1-DFMEA旧版.xlsx",
         "use_deepseek_fill": False,
         "use_deepseek_analysis": False,
         "label_zh": "模板1：DFMEA 旧版",
         "label_en": "Template 1: DFMEA Legacy",
     },
     "template2": {
-        "filename": "新版FMEA表格.xlsx",
-        "fallback_filename": "新版FMEA表格.xlsx",
+        "filename": "模板2-DFMEA新版.xlsx",
         "use_deepseek_fill": True,
         "use_deepseek_analysis": True,
         "label_zh": "模板2：DFMEA 新版",
@@ -41,15 +39,14 @@ def resolve_profile_template_filename(mode: str) -> Optional[str]:
     profile = TEMPLATE_PROFILES.get(mode)
     if not profile:
         return None
-    for name in (profile.get("filename"), profile.get("fallback_filename")):
-        if not name:
-            continue
-        try:
-            _resolve_template_path(name, "AI-DQA")
-            return name
-        except FileNotFoundError:
-            continue
-    return profile.get("filename")
+    name = profile.get("filename")
+    if not name:
+        return None
+    try:
+        _resolve_template_path(name, "AI-DQA")
+        return name
+    except FileNotFoundError:
+        return name
 
 
 def profile_uses_deepseek_fill(mode: str) -> bool:

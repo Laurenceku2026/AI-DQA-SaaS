@@ -47,6 +47,28 @@ TEMPLATE_EXTENSIONS = (".xlsx", ".xls", ".docx")
 DFMEA_SHEET_NAME = "DFMEA标准表格"
 DFMEA_DATA_START_ROW = 12
 
+# 旧版 DFMEA（模板1）列映射
+LEGACY_DFMEA_SHEET = "DFMEA"
+LEGACY_DFMEA_DATA_START_ROW = 11
+LEGACY_DFMEA_ROW_COLUMNS = {
+    "focus_element": 2,
+    "failure_mode": 3,
+    "failure_effect": 4,
+    "severity": 5,
+    "failure_cause": 7,
+    "occurrence": 8,
+    "prevention_control": 9,
+    "detection_control": 10,
+    "detection": 11,
+    "prevention_action": 15,
+}
+LEGACY_DFMEA_HEADER_CELLS = {
+    "project_name": (6, 1),
+    "key_part": (6, 7),
+    "team": (7, 1),
+    "fmea_date": (7, 13),
+}
+
 from dqa_template_profiles import (  # noqa: E402
     TEMPLATE_PROFILES,
     get_template_profile_label,
@@ -111,6 +133,18 @@ DFMEA_ROW_COLUMNS = {
 
 
 def list_report_templates(app_key: str = "AI-DQA") -> List[str]:
+    preferred = [
+        "模板1-DFMEA旧版.xlsx",
+        "模板2-DFMEA新版.xlsx",
+    ]
+    found: List[str] = []
+    for name in preferred:
+        try:
+            resolve_template_path(name, app_key)
+            if name not in found:
+                found.append(name)
+        except FileNotFoundError:
+            continue
     here = os.path.dirname(os.path.abspath(__file__))
     folders = [
         os.path.join(here, "templates"),
@@ -475,6 +509,56 @@ def _to_int(value) -> Optional[int]:
     return int(m.group()) if m else None
 
 
+def _is_legacy_dfmea_workbook(wb, template_filename: str = "") -> bool:
+    if template_filename and ("旧版" in template_filename or "模板1" in template_filename):
+        return True
+    return DFMEA_SHEET_NAME not in wb.sheetnames and LEGACY_DFMEA_SHEET in wb.sheetnames
+
+
+def _fill_legacy_dfmea_rows(ws, rows: List[Dict[str, Any]]) -> None:
+    int_fields = {"severity", "occurrence", "detection"}
+    for idx, row_data in enumerate(rows[:10]):
+        row = LEGACY_DFMEA_DATA_START_ROW + idx
+        for field, col in LEGACY_DFMEA_ROW_COLUMNS.items():
+            value = row_data.get(field)
+            if field == "failure_effect" and not value:
+                value = row_data.get("failure_mode", "")
+            if field in int_fields:
+                _set_cell(ws, row, col, _to_int(value))
+            else:
+                _set_cell(ws, row, col, value)
+
+
+def fill_legacy_dfmea_workbook(
+    wb,
+    product_name: str,
+    product_desc: str,
+    report_content: str,
+    analyst_name: str,
+    analyst_title: str,
+    lang: str,
+) -> BytesIO:
+    ws = wb[LEGACY_DFMEA_SHEET] if LEGACY_DFMEA_SHEET in wb.sheetnames else wb[wb.sheetnames[0]]
+    today = datetime.now().strftime("%Y-%m-%d")
+    team = analyst_name or ("未填写" if lang == "zh" else "N/A")
+    if analyst_title:
+        team = f"{team} ({analyst_title})"
+    header_values = {
+        "project_name": product_name,
+        "key_part": product_desc[:80] if product_desc else product_name,
+        "team": team,
+        "fmea_date": today,
+    }
+    for key, (row, col) in LEGACY_DFMEA_HEADER_CELLS.items():
+        _set_cell(ws, row, col, header_values.get(key))
+    rows = _merge_rows_with_report([], product_name, product_desc, report_content, lang)
+    _fill_legacy_dfmea_rows(ws, rows)
+    out = BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return out
+
+
 def _fill_dfmea_rows(ws, rows: List[Dict[str, Any]]) -> None:
     int_fields = {"severity", "occurrence", "detection", "action_priority"}
     for idx, row_data in enumerate(rows[:10]):
@@ -497,7 +581,13 @@ def fill_dfmea_workbook(
     lang: str,
     template_outline: str = "",
     call_deepseek: Optional[Callable[[str, int], str]] = None,
+    template_filename: str = "",
 ) -> BytesIO:
+    if _is_legacy_dfmea_workbook(wb, template_filename):
+        return fill_legacy_dfmea_workbook(
+            wb, product_name, product_desc, report_content, analyst_name, analyst_title, lang
+        )
+
     ws = wb[DFMEA_SHEET_NAME] if DFMEA_SHEET_NAME in wb.sheetnames else wb[wb.sheetnames[0]]
     today = datetime.now().strftime("%Y-%m-%d")
     team = analyst_name or ("未填写" if lang == "zh" else "N/A")
@@ -538,7 +628,7 @@ def fill_dfmea_template(
     analyst_name: str = "",
     analyst_title: str = "",
     lang: str = "zh",
-    template_filename: str = "新版FMEA表格.xlsx",
+    template_filename: str = "模板2-DFMEA新版.xlsx",
     template_bytes: Optional[bytes] = None,
     template_outline: str = "",
     call_deepseek: Optional[Callable[[str, int], str]] = None,
@@ -559,6 +649,7 @@ def fill_dfmea_template(
         lang,
         template_outline=template_outline,
         call_deepseek=call_deepseek,
+        template_filename=template_filename,
     )
 
 
@@ -638,7 +729,7 @@ def export_report_template(
     template_outline: str = "",
     call_deepseek: Optional[Callable[[str, int], str]] = None,
 ) -> Tuple[BytesIO, str]:
-    filename = template_filename or "新版FMEA表格.xlsx"
+    filename = template_filename or "模板2-DFMEA新版.xlsx"
     ext = os.path.splitext(filename)[1].lower()
 
     if template_bytes is None and template_filename:
