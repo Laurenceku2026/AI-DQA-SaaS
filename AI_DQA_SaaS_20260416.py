@@ -15,8 +15,7 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
-from dfss_report_templates import (
-    build_template_guided_analysis_addon,
+from dqa_report_templates import (
     export_report_template,
     extract_template_outline,
     list_report_templates,
@@ -24,6 +23,35 @@ from dfss_report_templates import (
 )
 from knowledge_base_utils import SupabaseKnowledgeDB, is_chinese
 from web_search_utils import web_search_dual as shared_web_search_dual
+
+
+def build_template_guided_analysis_addon(template_outline: str, lang: str) -> str:
+    """Prompt addon for template-guided DFMEA analysis (kept in main app for deploy safety)."""
+    if lang == "en":
+        return f"""
+=== Client DFMEA template requirements (Steps 2-6) ===
+The analysis must be detailed enough to fill a DFMEA template with these fields per risk row:
+- Step 2 structure: higher level, focus element, next lower level
+- Step 3 function: function/requirements for each level
+- Step 4 failure: failure effect (FE), severity (S), failure mode (FM), failure cause (FC)
+- Step 5 risk: prevention control (PC), occurrence (O), detection control (DC), detection (D)
+- Step 6 optimization: prevention actions, detection actions, owner, target date
+
+Template outline:
+{template_outline}
+"""
+    return f"""
+=== 客户 DFMEA 模板要求（步骤2-6） ===
+分析结果必须足够详细，可填入 DFMEA 模板每一行风险数据的以下字段：
+- 步骤2 结构分析：上一层级、关注要素、下一低层级
+- 步骤3 功能分析：各层级功能及要求
+- 步骤4 失效分析：失效影响(FE)、严重度(S)、失效模式(FM)、失效原因(FC)
+- 步骤5 风险分析：预防控制(PC)、发生度(O)、探测控制(DC)、探测度(D)
+- 步骤6 优化：预防措施、探测措施、责任人、目标完成日期
+
+模板结构摘要：
+{template_outline}
+"""
 
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
