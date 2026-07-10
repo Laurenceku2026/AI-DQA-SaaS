@@ -290,7 +290,7 @@ if "upload_result" not in st.session_state:
 if "use_custom_template" not in st.session_state:
     st.session_state.use_custom_template = False
 if "template_mode" not in st.session_state:
-    st.session_state.template_mode = "custom" if st.session_state.use_custom_template else "none"
+    st.session_state.template_mode = "template1"
 if "uploaded_template_name" not in st.session_state:
     st.session_state.uploaded_template_name = ""
 if "uploaded_template_bytes" not in st.session_state:
@@ -1264,7 +1264,7 @@ st.session_state.template_mode = st.selectbox(
         "custom": t["template_mode_custom"],
     }.get(mode, mode),
     index=["none", "template1", "template2", "custom"].index(
-        st.session_state.template_mode if st.session_state.template_mode in {"none", "template1", "template2", "custom"} else "none"
+        st.session_state.template_mode if st.session_state.template_mode in {"none", "template1", "template2", "custom"} else "template1"
     ),
     key="dqa_template_mode_select",
 )

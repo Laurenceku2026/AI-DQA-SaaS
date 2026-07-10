@@ -10,16 +10,16 @@ TEMPLATE_PROFILES: Dict[str, Dict[str, Any]] = {
         "fallback_filename": "新版FMEA表格.xlsx",
         "use_deepseek_fill": False,
         "use_deepseek_analysis": False,
-        "label_zh": "模板1（旧版·规则填表，省Token）",
-        "label_en": "Template 1 (legacy rule-based, saves tokens)",
+        "label_zh": "模板1：DFMEA 旧版",
+        "label_en": "Template 1: DFMEA Legacy",
     },
     "template2": {
         "filename": "新版FMEA表格.xlsx",
         "fallback_filename": "新版FMEA表格.xlsx",
         "use_deepseek_fill": True,
         "use_deepseek_analysis": True,
-        "label_zh": "模板2（新版·AI完整填表）",
-        "label_en": "Template 2 (new AI-enhanced fill)",
+        "label_zh": "模板2：DFMEA 新版",
+        "label_en": "Template 2: DFMEA New",
     },
 }
 

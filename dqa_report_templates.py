@@ -462,7 +462,10 @@ def _set_cell(ws, row: int, col: int, value) -> None:
     text = str(value).strip()
     if not text:
         return
-    ws.cell(row=row, column=col, value=value if str(value).isdigit() else text)
+    from openpyxl.styles import Font
+
+    cell = ws.cell(row=row, column=col, value=value if str(value).isdigit() else text)
+    cell.font = Font(color="000000")
 
 
 def _to_int(value) -> Optional[int]:
