@@ -45,6 +45,7 @@ def _extract_xls_outline(template_bytes: bytes, filename: str) -> str:
 
 TEMPLATE_EXTENSIONS = (".xlsx", ".xls", ".docx")
 DFMEA_SHEET_NAME = "DFMEA标准表格"
+DFMEA_SHEET_ALIASES = ("DFMEA标准表格", "DFMEA Standard Form")
 DFMEA_DATA_START_ROW = 12
 
 # 旧版 DFMEA（模板1）列映射
@@ -685,6 +686,13 @@ def _to_int(value) -> Optional[int]:
     return int(m.group()) if m else None
 
 
+def _get_dfmea_worksheet(wb):
+    for name in DFMEA_SHEET_ALIASES:
+        if name in wb.sheetnames:
+            return wb[name]
+    return wb[wb.sheetnames[0]]
+
+
 def _is_legacy_dfmea_workbook(wb, template_filename: str = "") -> bool:
     if template_filename:
         lower = template_filename.lower()
@@ -692,7 +700,7 @@ def _is_legacy_dfmea_workbook(wb, template_filename: str = "") -> bool:
             return True
         if "新版" in template_filename or "模板2" in template_filename or "template-2" in lower:
             return False
-    return DFMEA_SHEET_NAME not in wb.sheetnames and LEGACY_DFMEA_SHEET in wb.sheetnames
+    return not any(name in wb.sheetnames for name in DFMEA_SHEET_ALIASES) and LEGACY_DFMEA_SHEET in wb.sheetnames
 
 
 def _fill_legacy_dfmea_rows(ws, rows: List[Dict[str, Any]]) -> None:
@@ -774,7 +782,7 @@ def fill_dfmea_workbook(
             wb, product_name, product_desc, report_content, analyst_name, analyst_title, lang
         )
 
-    ws = wb[DFMEA_SHEET_NAME] if DFMEA_SHEET_NAME in wb.sheetnames else wb[wb.sheetnames[0]]
+    ws = _get_dfmea_worksheet(wb)
     today_dt = datetime.now()
     today = today_dt.strftime("%Y-%m-%d")
     team = analyst_name or ("未填写" if lang == "zh" else "N/A")
