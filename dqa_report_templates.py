@@ -79,8 +79,26 @@ from dqa_template_profiles import (  # noqa: E402
     get_template_profile_label,
     profile_uses_deepseek_analysis,
     profile_uses_deepseek_fill,
-    resolve_profile_template_filename,
+    resolve_profile_template_filename as _resolve_profile_template_filename,
 )
+
+try:
+    from dqa_template_profiles import profile_template_filename
+except ImportError:  # older deployed profile module
+    def profile_template_filename(mode: str, lang: str = "zh") -> Optional[str]:
+        names = {
+            "template1": ("模板1-DFMEA旧版.xlsx", "Template-1-DFMEA-Legacy.xlsx"),
+            "template2": ("模板2-DFMEA新版.xlsx", "Template-2-DFMEA-New.xlsx"),
+        }
+        zh_name, en_name = names.get(mode, ("", ""))
+        return en_name if lang == "en" else zh_name
+
+
+def resolve_profile_template_filename(mode: str, lang: str = "zh") -> Optional[str]:
+    try:
+        return _resolve_profile_template_filename(mode, lang) or profile_template_filename(mode, lang)
+    except TypeError:
+        return _resolve_profile_template_filename(mode) or profile_template_filename(mode, lang)
 
 DFMEA_FIELD_ALIASES: Dict[str, List[str]] = {
     "higher_level": ["higher_level", "上一级", "上一层级"],
