@@ -48,12 +48,18 @@ from dqa_report_templates import (
 )
 import jwt
 
-from knowledge_base_utils import (
-    KB_CATEGORY_HEADERS,
-    KNOWLEDGE_CATEGORIES,
-    SupabaseKnowledgeDB,
-    is_chinese,
-)
+KNOWLEDGE_CATEGORIES = ["光学", "机械", "材料", "热学", "电气", "控制", "其他"]
+KB_CATEGORY_HEADERS = [
+    "光学 / Optical",
+    "机械 / Mechanical",
+    "材料 / Material",
+    "热学 / Thermal",
+    "电气 / Electrical",
+    "控制 / Control",
+    "其他 / Other",
+]
+
+from knowledge_base_utils import SupabaseKnowledgeDB, is_chinese
 from web_search_utils import web_search_dual as shared_web_search_dual
 
 
@@ -140,6 +146,17 @@ def set_app_language(lang: str):
 
 if "organization_id" not in st.session_state:
     st.session_state.organization_id = None
+if "organization_name" not in st.session_state:
+    st.session_state.organization_name = ""
+
+
+def is_enterprise_user() -> bool:
+    return bool(st.session_state.get("organization_id"))
+
+
+def enterprise_display_name() -> str:
+    return (st.session_state.get("organization_name") or "").strip()
+
 
 if "user_id" in query_params or _qp_first("token"):
     # 获取 user_id
@@ -279,19 +296,24 @@ def consume_trial(user_id: str, app_name: str) -> tuple:
 
 # ================== 侧边栏（显示用户信息和实时剩余次数）==================
 with st.sidebar:
+    if is_enterprise_user():
+        org_name = enterprise_display_name()
+        if org_name:
+            st.markdown(f"### 🏢 {org_name}")
     st.markdown(f"### 👤 {st.session_state.username}")
-    remaining = get_user_remaining_trials(st.session_state.user_id)
-    lang = st.session_state.lang
-    if remaining == -1:
-        if lang == "zh":
-            st.info("🎫 剩余免费次数: ∞ (专业版)")
+    if not is_enterprise_user():
+        remaining = get_user_remaining_trials(st.session_state.user_id)
+        lang = st.session_state.lang
+        if remaining == -1:
+            if lang == "zh":
+                st.info("🎫 剩余免费次数: ∞ (专业版)")
+            else:
+                st.info("🎫 Remaining Trials: ∞ (Pro)")
         else:
-            st.info("🎫 Remaining Trials: ∞ (Pro)")
-    else:
-        if lang == "zh":
-            st.info(f"🎫 剩余免费次数: {remaining}")
-        else:
-            st.info(f"🎫 Remaining Trials: {remaining}")
+            if lang == "zh":
+                st.info(f"🎫 剩余免费次数: {remaining}")
+            else:
+                st.info(f"🎫 Remaining Trials: {remaining}")
     st.markdown("---")
 
 # ================== 自定义 CSS ==================
@@ -1274,6 +1296,10 @@ TEXTS = {
 
 lang = st.session_state.lang
 t = TEXTS[lang]
+if is_enterprise_user():
+    org_name = enterprise_display_name()
+    if org_name:
+        st.markdown(f"## 🏢 {org_name}")
 st.title(t["title"])
 
 # 初始化数据库
@@ -1311,7 +1337,8 @@ with st.sidebar:
     st.markdown(f"**{t['db_status']}**")
     st.info(t["db_connected"])
     st.markdown("---")
-    st.markdown(t["contact_info"])
+    if not is_enterprise_user():
+        st.markdown(t["contact_info"])
 
 # ================== 主界面 ==================
 st.markdown(f"### {t['input_title']}")
