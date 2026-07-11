@@ -1201,6 +1201,10 @@ TEXTS = {
         "analyze_btn": "开始AI深度分析",
         "product_name_missing": "请填写产品名称",
         "generating": "AI 正在分析中，请稍候...",
+        "progress_preparing": "准备分析环境...",
+        "progress_template": "加载分析模板...",
+        "progress_generating": "AI 深度分析中...",
+        "progress_finishing": "整理分析报告...",
         "footer": "© 2026 Laurence Ku | AI+DQA 风险分析",
         "db_status": "数据库状态",
         "db_connected": "✅ 混合模式 (SQLite + Neo4j + Supabase知识库)",
@@ -1237,6 +1241,10 @@ TEXTS = {
         "analyze_btn": "Start AI Deep Analysis",
         "product_name_missing": "Please enter product name",
         "generating": "AI is analyzing, please wait...",
+        "progress_preparing": "Preparing analysis...",
+        "progress_template": "Loading template...",
+        "progress_generating": "Running AI deep analysis...",
+        "progress_finishing": "Finalizing report...",
         "footer": "© 2026 Laurence Ku | AI+DQA Risk Analysis",
         "db_status": "Database Status",
         "db_connected": "✅ Hybrid Mode (SQLite + Neo4j + Supabase Knowledge Base)",
@@ -1354,7 +1362,9 @@ if st.session_state.template_mode == "custom":
 col_center = st.columns([1, 2, 1])[1]
 with col_center:
     st.markdown('<div class="main-analyze">', unsafe_allow_html=True)
-    if st.button(t["analyze_btn"], key="main_analyze_btn", type="primary"):
+    analyze_clicked = st.button(t["analyze_btn"], key="main_analyze_btn", type="primary")
+    progress_slot = st.empty()
+    if analyze_clicked:
         if not product_name:
             st.error(t["product_name_missing"])
         else:
@@ -1364,19 +1374,24 @@ with col_center:
                 st.error(error_msg)
             else:
                 db = st.session_state.database
-                with st.spinner(t["generating"]):
+                progress_bar = progress_slot.progress(0, text=t["progress_preparing"])
+                try:
+                    progress_bar.progress(10, text=t["progress_preparing"])
                     template_outline = ""
                     mode = st.session_state.template_mode
                     if mode == "custom" and st.session_state.uploaded_template_bytes:
+                        progress_bar.progress(25, text=t["progress_template"])
                         template_outline = st.session_state.template_outline or extract_template_outline(
                             st.session_state.uploaded_template_bytes,
                             st.session_state.uploaded_template_name,
                         )
                     elif mode == "template2":
+                        progress_bar.progress(25, text=t["progress_template"])
                         tpl_name = resolve_profile_template_filename("template2", st.session_state.lang)
                         if tpl_name:
                             with open(resolve_template_path(tpl_name, "AI-DQA"), "rb") as f:
                                 template_outline = extract_template_outline(f.read(), tpl_name)
+                    progress_bar.progress(55, text=t["progress_generating"])
                     report_content = generate_ai_analysis_content(
                         product_name, product_desc,
                         st.session_state.enable_web_search,
@@ -1384,10 +1399,15 @@ with col_center:
                         lang=st.session_state.lang,
                         template_outline=template_outline,
                     )
+                    progress_bar.progress(95, text=t["progress_finishing"])
                     st.session_state.report_content = report_content
                     st.session_state.last_product_name = product_name
                     st.session_state.last_product_desc = product_desc
+                    progress_bar.progress(100, text=t["generating"])
                     st.rerun()
+                except Exception as exc:
+                    progress_slot.empty()
+                    st.error(f"{t['generating']} ({exc})")
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ================== 显示已生成的报告 ==================
