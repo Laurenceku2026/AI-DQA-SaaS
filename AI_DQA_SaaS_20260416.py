@@ -46,7 +46,6 @@ from dqa_report_templates import (
     list_report_templates,
     resolve_template_path,
 )
-import jwt
 
 KNOWLEDGE_CATEGORIES = ["光学", "机械", "材料", "热学", "电气", "控制", "其他"]
 KB_CATEGORY_HEADERS = [
@@ -60,6 +59,15 @@ KB_CATEGORY_HEADERS = [
 ]
 
 from knowledge_base_utils import SupabaseKnowledgeDB, is_chinese
+from portal_enterprise_ui import (
+    apply_portal_token,
+    ensure_enterprise_session_defaults,
+    is_enterprise_user,
+    load_enterprise_branding,
+    qp_first,
+    render_enterprise_main_brand,
+    render_enterprise_sidebar_brand,
+)
 from web_search_utils import web_search_dual as shared_web_search_dual
 
 
@@ -98,44 +106,6 @@ st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", lay
 query_params = st.query_params
 
 
-def _qp_first(key: str) -> str:
-    val = query_params.get(key)
-    if isinstance(val, list):
-        return val[0] if val else ""
-    return val or ""
-
-
-def _apply_portal_token() -> None:
-    token = _qp_first("token")
-    secret = st.secrets.get("JWT_SECRET_KEY")
-    if not token or not secret:
-        return
-    try:
-        payload = jwt.decode(token, secret, algorithms=["HS256"])
-    except jwt.PyJWTError:
-        return
-
-    if payload.get("sub"):
-        st.session_state.user_id = payload["sub"]
-    if payload.get("email"):
-        st.session_state.user_email = payload["email"]
-        if "@" in payload["email"]:
-            st.session_state.username = payload["email"].split("@")[0]
-    if payload.get("organization_id"):
-        st.session_state.organization_id = payload["organization_id"]
-    if payload.get("organization_name"):
-        st.session_state.organization_name = payload["organization_name"]
-    if payload.get("org_role"):
-        st.session_state.org_role = payload["org_role"]
-    if payload.get("trials_left") is not None and "trials_left" not in st.session_state:
-        try:
-            st.session_state.trials_left = int(payload["trials_left"])
-        except (TypeError, ValueError):
-            pass
-    if "lang" not in st.session_state and payload.get("lang") in ("zh", "en"):
-        set_app_language(payload["lang"])
-
-
 def set_app_language(lang: str):
     """同步 session 与 URL 语言，避免 query_params 在 rerun 时覆盖用户选择。"""
     if lang not in ("zh", "en"):
@@ -144,21 +114,9 @@ def set_app_language(lang: str):
     st.query_params["lang"] = lang
 
 
-if "organization_id" not in st.session_state:
-    st.session_state.organization_id = None
-if "organization_name" not in st.session_state:
-    st.session_state.organization_name = ""
+ensure_enterprise_session_defaults()
 
-
-def is_enterprise_user() -> bool:
-    return bool(st.session_state.get("organization_id"))
-
-
-def enterprise_display_name() -> str:
-    return (st.session_state.get("organization_name") or "").strip()
-
-
-if "user_id" in query_params or _qp_first("token"):
+if "user_id" in query_params or qp_first(query_params, "token"):
     # 获取 user_id
     user_id_val = query_params.get("user_id")
     if user_id_val is not None:
@@ -167,7 +125,7 @@ if "user_id" in query_params or _qp_first("token"):
         else:
             st.session_state.user_id = user_id_val
 
-    _apply_portal_token()
+    apply_portal_token(query_params, set_app_language=set_app_language)
 
     # 获取 email
     email_val = query_params.get("email", "")
@@ -215,6 +173,8 @@ HEADERS = {
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json"
 }
+
+load_enterprise_branding(SUPABASE_URL, HEADERS)
 
 def supabase_get(table: str, user_id: str = None):
     """GET 请求"""
@@ -296,10 +256,7 @@ def consume_trial(user_id: str, app_name: str) -> tuple:
 
 # ================== 侧边栏（显示用户信息和实时剩余次数）==================
 with st.sidebar:
-    if is_enterprise_user():
-        org_name = enterprise_display_name()
-        if org_name:
-            st.markdown(f"### 🏢 {org_name}")
+    render_enterprise_sidebar_brand()
     st.markdown(f"### 👤 {st.session_state.username}")
     if not is_enterprise_user():
         remaining = get_user_remaining_trials(st.session_state.user_id)
@@ -1296,10 +1253,7 @@ TEXTS = {
 
 lang = st.session_state.lang
 t = TEXTS[lang]
-if is_enterprise_user():
-    org_name = enterprise_display_name()
-    if org_name:
-        st.markdown(f"## 🏢 {org_name}")
+render_enterprise_main_brand()
 st.title(t["title"])
 
 # 初始化数据库
