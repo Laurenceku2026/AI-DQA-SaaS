@@ -137,10 +137,12 @@ DFMEA_ROW_COLUMNS = {
 }
 
 
-def list_report_templates(app_key: str = "AI-DQA") -> List[str]:
+def list_report_templates(app_key: str = "AI-DQA", lang: str = "zh") -> List[str]:
+    from dqa_template_profiles import profile_template_filename
+
     preferred = [
-        "模板1-DFMEA旧版.xlsx",
-        "模板2-DFMEA新版.xlsx",
+        profile_template_filename("template1", lang) or "模板1-DFMEA旧版.xlsx",
+        profile_template_filename("template2", lang) or "模板2-DFMEA新版.xlsx",
     ]
     found: List[str] = []
     for name in preferred:
@@ -195,10 +197,21 @@ def resolve_template_path(filename: str, app_key: str = "AI-DQA") -> str:
     templates_dir = os.path.join(here, "templates")
     if os.path.isdir(templates_dir):
         markers = []
-        if "旧版" in filename or "模板1" in filename:
+        en_markers = []
+        lower_name = filename.lower()
+        if "旧版" in filename or "模板1" in filename or "legacy" in lower_name:
             markers = ["旧版", "模板1"]
-        elif "新版" in filename or "模板2" in filename:
+            en_markers = ["legacy", "template-1"]
+        elif "新版" in filename or "模板2" in filename or "template-2" in lower_name:
             markers = ["新版", "模板2"]
+            en_markers = ["template-2", "dfmea"]
+        use_en = "legacy" in lower_name or "template-1" in lower_name or "template-2" in lower_name
+        active = en_markers if use_en else markers
+        for name in os.listdir(templates_dir):
+            if not name.endswith((".xlsx", ".xls")):
+                continue
+            if active and any(m.lower() in name.lower() for m in active):
+                return os.path.join(templates_dir, name)
         for name in os.listdir(templates_dir):
             if not name.endswith((".xlsx", ".xls")):
                 continue
@@ -655,8 +668,12 @@ def _to_int(value) -> Optional[int]:
 
 
 def _is_legacy_dfmea_workbook(wb, template_filename: str = "") -> bool:
-    if template_filename and ("旧版" in template_filename or "模板1" in template_filename):
-        return True
+    if template_filename:
+        lower = template_filename.lower()
+        if "旧版" in template_filename or "模板1" in template_filename or "legacy" in lower or "template-1" in lower:
+            return True
+        if "新版" in template_filename or "模板2" in template_filename or "template-2" in lower:
+            return False
     return DFMEA_SHEET_NAME not in wb.sheetnames and LEGACY_DFMEA_SHEET in wb.sheetnames
 
 
@@ -891,7 +908,11 @@ def export_report_template(
     template_outline: str = "",
     call_deepseek: Optional[Callable[[str, int], str]] = None,
 ) -> Tuple[BytesIO, str]:
-    filename = template_filename or "模板2-DFMEA新版.xlsx"
+    from dqa_template_profiles import profile_template_filename
+
+    filename = template_filename or profile_template_filename("template2", lang) or (
+        "Template-2-DFMEA-New.xlsx" if lang == "en" else "模板2-DFMEA新版.xlsx"
+    )
     ext = os.path.splitext(filename)[1].lower()
 
     if template_bytes is None and template_filename:

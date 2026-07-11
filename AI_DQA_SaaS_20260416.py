@@ -1324,7 +1324,7 @@ with col_center:
                             st.session_state.uploaded_template_name,
                         )
                     elif mode == "template2":
-                        tpl_name = resolve_profile_template_filename("template2")
+                        tpl_name = resolve_profile_template_filename("template2", st.session_state.lang)
                         if tpl_name:
                             with open(resolve_template_path(tpl_name, "AI-DQA"), "rb") as f:
                                 template_outline = extract_template_outline(f.read(), tpl_name)
@@ -1359,7 +1359,7 @@ if st.session_state.report_content:
     st.markdown('</div>', unsafe_allow_html=True)
     
     col_word, col_template = st.columns(2)
-    templates = list_report_templates("AI-DQA")
+    templates = list_report_templates("AI-DQA", lang)
 
     with col_word:
         st.download_button(
@@ -1386,11 +1386,11 @@ if st.session_state.report_content:
         template_options = []
         mode = st.session_state.template_mode
         if mode == "template1":
-            tpl1 = resolve_profile_template_filename("template1")
+            tpl1 = resolve_profile_template_filename("template1", lang)
             if tpl1:
                 template_options.append(tpl1)
         elif mode == "template2":
-            tpl2 = resolve_profile_template_filename("template2")
+            tpl2 = resolve_profile_template_filename("template2", lang)
             if tpl2:
                 template_options.append(tpl2)
         elif mode == "custom" and st.session_state.uploaded_template_bytes and st.session_state.uploaded_template_name:
@@ -1447,9 +1447,10 @@ if st.session_state.report_content:
                         call_deepseek=call_deepseek if use_deepseek_fill else None,
                     )
                     ext = os.path.splitext(selected_template)[1]
+                    suffix = "模板报告" if lang == "zh" else "Template_Report"
                     st.session_state.dqa_template_download = {
                         "data": template_bytes.getvalue(),
-                        "name": f"{st.session_state.last_product_name}_模板报告_{datetime.now().strftime('%Y%m%d')}{ext}",
+                        "name": f"{st.session_state.last_product_name}_{suffix}_{datetime.now().strftime('%Y%m%d')}{ext}",
                         "mime": template_mime,
                     }
                 except Exception as exc:
