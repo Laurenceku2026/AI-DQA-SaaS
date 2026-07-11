@@ -1161,7 +1161,10 @@ def admin_settings_dialog():
 
 
 # ================== 右上角按钮 ==================
-col_left, col_spacer, col_zh, col_en, col_gear = st.columns([5, 2, 1.8, 1.8, 1])
+if is_enterprise_user():
+    col_left, col_spacer, col_zh, col_en = st.columns([5, 2, 1.8, 1.8])
+else:
+    col_left, col_spacer, col_zh, col_en, col_gear = st.columns([5, 2, 1.8, 1.8, 1])
 with col_zh:
     if st.button("🇨🇳 中文", key="zh_btn", use_container_width=True):
         set_app_language("zh")
@@ -1170,9 +1173,10 @@ with col_en:
     if st.button("🇬🇧 English", key="en_btn", use_container_width=True):
         set_app_language("en")
         st.rerun()
-with col_gear:
-    if st.button("⚙️", key="settings_btn", use_container_width=True):
-        admin_settings_dialog()
+if not is_enterprise_user():
+    with col_gear:
+        if st.button("⚙️", key="settings_btn", use_container_width=True):
+            admin_settings_dialog()
 
 
 # ================== 多语言文本 ==================
