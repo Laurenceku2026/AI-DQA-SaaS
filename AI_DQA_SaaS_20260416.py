@@ -46,7 +46,14 @@ from dqa_report_templates import (
     list_report_templates,
     resolve_template_path,
 )
-from knowledge_base_utils import SupabaseKnowledgeDB, is_chinese
+import jwt
+
+from knowledge_base_utils import (
+    KB_CATEGORY_HEADERS,
+    KNOWLEDGE_CATEGORIES,
+    SupabaseKnowledgeDB,
+    is_chinese,
+)
 from web_search_utils import web_search_dual as shared_web_search_dual
 
 
@@ -85,6 +92,44 @@ st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", lay
 query_params = st.query_params
 
 
+def _qp_first(key: str) -> str:
+    val = query_params.get(key)
+    if isinstance(val, list):
+        return val[0] if val else ""
+    return val or ""
+
+
+def _apply_portal_token() -> None:
+    token = _qp_first("token")
+    secret = st.secrets.get("JWT_SECRET_KEY")
+    if not token or not secret:
+        return
+    try:
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
+    except jwt.PyJWTError:
+        return
+
+    if payload.get("sub"):
+        st.session_state.user_id = payload["sub"]
+    if payload.get("email"):
+        st.session_state.user_email = payload["email"]
+        if "@" in payload["email"]:
+            st.session_state.username = payload["email"].split("@")[0]
+    if payload.get("organization_id"):
+        st.session_state.organization_id = payload["organization_id"]
+    if payload.get("organization_name"):
+        st.session_state.organization_name = payload["organization_name"]
+    if payload.get("org_role"):
+        st.session_state.org_role = payload["org_role"]
+    if payload.get("trials_left") is not None and "trials_left" not in st.session_state:
+        try:
+            st.session_state.trials_left = int(payload["trials_left"])
+        except (TypeError, ValueError):
+            pass
+    if "lang" not in st.session_state and payload.get("lang") in ("zh", "en"):
+        set_app_language(payload["lang"])
+
+
 def set_app_language(lang: str):
     """同步 session 与 URL 语言，避免 query_params 在 rerun 时覆盖用户选择。"""
     if lang not in ("zh", "en"):
@@ -93,14 +138,20 @@ def set_app_language(lang: str):
     st.query_params["lang"] = lang
 
 
-if "user_id" in query_params:
+if "organization_id" not in st.session_state:
+    st.session_state.organization_id = None
+
+if "user_id" in query_params or _qp_first("token"):
     # 获取 user_id
-    user_id_val = query_params["user_id"]
-    if isinstance(user_id_val, list):
-        st.session_state.user_id = user_id_val[0]
-    else:
-        st.session_state.user_id = user_id_val
-    
+    user_id_val = query_params.get("user_id")
+    if user_id_val is not None:
+        if isinstance(user_id_val, list):
+            st.session_state.user_id = user_id_val[0]
+        else:
+            st.session_state.user_id = user_id_val
+
+    _apply_portal_token()
+
     # 获取 email
     email_val = query_params.get("email", "")
     if isinstance(email_val, list):
@@ -130,6 +181,10 @@ if "user_id" in query_params:
         if isinstance(trials_val, list):
             trials_val = trials_val[0]
         st.session_state.trials_left = int(trials_val)
+
+    if not st.session_state.get("user_id"):
+        st.warning("请从 TechLife Suite 门户登录后访问")
+        st.stop()
 else:
     st.warning("请从 TechLife Suite 门户登录后访问")
     st.stop()
@@ -320,14 +375,26 @@ ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
 
 
-def create_supabase_knowledge_db() -> SupabaseKnowledgeDB:
+def create_supabase_knowledge_db(
+    *,
+    kb_scope: str = "platform",
+    include_tenant_kb: bool = True,
+) -> SupabaseKnowledgeDB:
+    org_id = st.session_state.get("organization_id")
     return SupabaseKnowledgeDB(
         SUPABASE_URL,
         SUPABASE_KEY,
         translate_to_en=lambda text: translate_text(text, "en"),
         translate_to_zh=lambda text: translate_text(text, "zh"),
         ui_lang_getter=lambda: st.session_state.get("lang", "zh"),
+        organization_id=org_id,
+        kb_scope=kb_scope,
+        include_tenant_kb=include_tenant_kb and bool(org_id),
     )
+
+
+def create_platform_admin_knowledge_db() -> SupabaseKnowledgeDB:
+    return create_supabase_knowledge_db(kb_scope="platform", include_tenant_kb=False)
 
 
 # ================== 数据库抽象接口 ==================
@@ -1002,9 +1069,10 @@ def admin_settings_dialog():
     })
     st.markdown("---")
     st.subheader("📚 知识库管理（双语，存储在 Supabase，永久保存）")
-    categories = ["光学", "机械", "材料", "热学", "电气", "控制"]
+    platform_kb = create_platform_admin_knowledge_db()
+    categories = KNOWLEDGE_CATEGORIES
     selected_cat = st.selectbox("选择分类", categories)
-    items = db.get_knowledge_by_category(selected_cat)
+    items = platform_kb.get_knowledge_by_category(selected_cat)
     st.write(f"共 {len(items)} 条记录")
     if items:
         with st.container(height=400):
@@ -1015,14 +1083,16 @@ def admin_settings_dialog():
                     st.write(f"{idx+1}. {display_item}")
                 with col2:
                     if st.button("❌", key=f"del_{selected_cat}_{idx}"):
-                        db.delete_knowledge(selected_cat, item)
+                        platform_kb.delete_knowledge(selected_cat, item)
+                        st.session_state.database.sqlite.supabase_kb._load_cache()
                         st.rerun()
     else:
         st.info("暂无条目")
     new_item = st.text_area("添加新经验教训（支持中英文，系统会自动翻译存储双语）", height=100)
     if st.button("添加条目"):
         if new_item.strip():
-            db.add_knowledge(selected_cat, new_item.strip())
+            platform_kb.add_knowledge(selected_cat, new_item.strip())
+            st.session_state.database.sqlite.supabase_kb._load_cache()
             st.rerun()
     st.markdown("---")
     
@@ -1033,14 +1103,14 @@ def admin_settings_dialog():
     col_export, col_spacer = st.columns([1, 3])
     with col_export:
         if st.button("📥 下载知识库模板 (Excel)", use_container_width=True):
-            all_zh = st.session_state.database.sqlite.supabase_kb.knowledge_zh
+            all_zh = platform_kb.knowledge_zh
             max_len = max((len(all_zh.get(cat, [])) for cat in categories), default=0)
             export_data = {}
             for cat in categories:
                 items_list = all_zh.get(cat, [])
                 export_data[cat] = items_list + [''] * (max_len - len(items_list))
             df = pd.DataFrame(export_data)
-            df.columns = ["光学 / Optical", "机械 / Mechanical", "材料 / Material", "热学 / Thermal", "电气 / Electrical", "控制 / Control"]
+            df.columns = KB_CATEGORY_HEADERS
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, sheet_name="知识库", index=False)
@@ -1060,36 +1130,12 @@ def admin_settings_dialog():
     if uploaded:
         with st.spinner("⏳ 正在上传并保存到 Supabase..."):
             try:
-                df = pd.read_excel(uploaded, sheet_name="知识库")
-                
-                column_mapping = {
-                    "光学 / Optical": "光学", "机械 / Mechanical": "机械", "材料 / Material": "材料",
-                    "热学 / Thermal": "热学", "电气 / Electrical": "电气", "控制 / Control": "控制",
-                    "光学": "光学", "机械": "机械", "材料": "材料", "热学": "热学", "电气": "电气", "控制": "控制"
-                }
-                
-                total_imported = 0
-                category_counts = {}
-                
-                # 清空现有数据
-                for cat in categories:
-                    db.clear_knowledge_category(cat)
-                
-                # 导入新数据
-                for excel_col, cat in column_mapping.items():
-                    if excel_col in df.columns:
-                        items_list = df[excel_col].dropna().astype(str).tolist()
-                        items_list = [item.strip() for item in items_list if item.strip()]
-                        category_counts[cat] = len(items_list)
-                        for item in items_list:
-                            db.add_knowledge(cat, item)
-                            total_imported += 1
-                
-                # 保存成功消息到 session_state
+                total_imported = platform_kb.import_from_excel_bytes(uploaded.getvalue())
+                st.session_state.database.sqlite.supabase_kb._load_cache()
                 st.session_state.upload_success = True
                 st.session_state.upload_result = {
                     "total": total_imported,
-                    "details": category_counts
+                    "details": {cat: len(platform_kb.knowledge_zh.get(cat, [])) for cat in categories},
                 }
                 st.rerun()
                 
